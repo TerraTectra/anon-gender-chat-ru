@@ -1,0 +1,15 @@
+{
+  "name": "Анонимный чат 12+",
+  "short_name": "Анонимный чат",
+  "start_url": "https://t.me/anon_gender_chat_ru_bot?start=src_manifest",
+  "display": "standalone",
+  "background_color": "#0b1820",
+  "theme_color": "#0b1820",
+  "icons": [
+    {
+      "src": "assets/bot-cover.png",
+      "sizes": "1024x1024",
+      "type": "image/png"
+    }
+  ]
+}

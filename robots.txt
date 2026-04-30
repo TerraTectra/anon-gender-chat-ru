@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://terratectra.github.io/anon-gender-chat-ru/sitemap.xml
