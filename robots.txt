@@ -2,3 +2,4 @@ User-agent: *
 Allow: /
 
 Sitemap: https://terratectra.github.io/anon-gender-chat-ru/sitemap.xml
+Sitemap: https://terratectra.github.io/anon-gender-chat-ru/feed.xml
