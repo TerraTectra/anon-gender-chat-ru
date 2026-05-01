@@ -14,6 +14,7 @@ SEO-лендинг для Telegram-бота [@anon_gender_chat_ru_bot](https://t
 Основные страницы:
 
 - [Анонимный чат в Telegram](https://terratectra.github.io/anon-gender-chat-ru/)
+- [Вечер анонимного чата](https://terratectra.github.io/anon-gender-chat-ru/vecher-anonimnogo-chata.html)
 - [Как найти собеседника в Telegram](https://terratectra.github.io/anon-gender-chat-ru/kak-nayti-sobesednika-v-telegram.html)
 - [Безопасный анонимный чат](https://terratectra.github.io/anon-gender-chat-ru/bezopasnyy-anonimnyy-chat-telegram.html)
 - [Рандомный чат Telegram](https://terratectra.github.io/anon-gender-chat-ru/random-chat-telegram.html)
