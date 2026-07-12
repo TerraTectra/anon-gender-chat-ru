@@ -1,6 +1,7 @@
 import { Bot, session } from "grammy";
 import { Store } from "./store.js";
 import { showCatalog } from "./catalog.js";
+import { parseStartSource } from "./tracking.js";
 import {
   confirmReportKeyboard,
   filterGenderKeyboard,
@@ -54,9 +55,7 @@ export function createUserBot(token, dbPath) {
   }
 
   bot.command("start", async (ctx) => {
-    const startParameter = ctx.match?.trim() || "";
-    const referral = startParameter.match(/^ref_(\d+)$/);
-    const source = referral && referral[1] !== String(ctx.from.id) ? startParameter : null;
+    const source = parseStartSource(ctx.match, ctx.from.id);
     const user = store.upsertUser(ctx.from.id, ctx.from.username, source);
     store.recordEvent(ctx.from.id, "start");
     if (!profileReady(user)) {
