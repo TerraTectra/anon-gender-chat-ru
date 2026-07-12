@@ -4,6 +4,7 @@ import { BudgetStore } from "./budget-store.js";
 import { FocusStore } from "./focus-store.js";
 import { GameStore } from "./game-store.js";
 import { LanguageStore } from "./language-store.js";
+import { HubStore } from "./hub-store.js";
 import { Store } from "./store.js";
 
 function parseAdmins(value = "") {
@@ -20,6 +21,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   const focusStore = options.focusDbPath ? new FocusStore(options.focusDbPath) : null;
   const gameStore = options.gameDbPath ? new GameStore(options.gameDbPath) : null;
   const budgetStore = options.budgetDbPath ? new BudgetStore(options.budgetDbPath) : null;
+  const hubStore = options.hubDbPath ? new HubStore(options.hubDbPath) : null;
   const admins = parseAdmins(adminIds);
   const bot = new Bot(token);
 
@@ -34,6 +36,10 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     if (budgetStore) {
       const budget = budgetStore.stats();
       parts.push(`Карманный бюджет\nПользователей: ${budget.users}\nЗаписей: ${budget.entries}\nАктивны за 30 дней: ${budget.active30}\nЗаблокировано: ${budget.banned}`);
+    }
+    if (hubStore) {
+      const hub = hubStore.stats();
+      parts.push(`TerraTectra Bots\nПользователей: ${hub.users}\nПереходов к ботам: ${hub.opens}\nПредложений: ${hub.suggestions}`);
     }
     return parts.join("\n\n");
   }
@@ -54,6 +60,10 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       const growth = budgetStore.growthStats();
       parts.push(`Карманный бюджет\nНовые сегодня: ${growth.newToday}\nНовые за 7 дней: ${growth.new7}\nПо приглашениям: ${growth.referred}\nЗаписей: ${growth.entries7}\nАктивных пользователей: ${growth.active7}`);
     }
+    if (hubStore) {
+      const growth = hubStore.growthStats();
+      parts.push(`TerraTectra Bots\nНовые сегодня: ${growth.newToday}\nНовые за 7 дней: ${growth.new7}\nПереходы к ботам: ${growth.opens7}\nПредложения: ${growth.suggestions7}`);
+    }
     return `Метрики за последние 7 дней\n\n${parts.join("\n\n")}`;
   }
 
@@ -63,7 +73,8 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       ["English Talk Match", englishStore],
       ["Focus Sprint", focusStore],
       ["Game Mate", gameStore],
-      ["Карманный бюджет", budgetStore]
+      ["Карманный бюджет", budgetStore],
+      ["TerraTectra Bots", hubStore]
     ];
     const parts = products.filter(([, productStore]) => productStore).map(([name, productStore]) => {
       const rows = productStore.sourceStats(10);

@@ -1,18 +1,12 @@
 import { InlineKeyboard } from "grammy";
+import { productLink, products } from "./products.js";
 
 export const catalogLabel = "🧭 Другие боты";
 
 export function catalogKeyboard() {
-  return new InlineKeyboard()
-    .url("Анонимный чат", "https://t.me/anon_gender_chat_ru_bot")
-    .row()
-    .url("English Talk Match", "https://t.me/EnglishTalkMatchBot")
-    .row()
-    .url("Focus Sprint", "https://t.me/FocusSprintTimerBot")
-    .row()
-    .url("Game Mate", "https://t.me/GameMateFinderRuBot")
-    .row()
-    .url("Карманный бюджет", "https://t.me/PocketBudgetRuBot");
+  const keyboard = new InlineKeyboard();
+  for (const product of products) keyboard.url(`${product.icon} ${product.name}`, productLink(product)).row();
+  return keyboard.url("🏠 Открыть семейный хаб", "https://t.me/TerraTectraBotsBot");
 }
 
 export function showCatalog(ctx) {
