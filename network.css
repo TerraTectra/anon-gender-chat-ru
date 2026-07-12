@@ -97,6 +97,7 @@ h1 {
 }
 
 .network-primary,
+.network-secondary,
 .bot-card > a {
   display: inline-flex;
   min-height: 46px;
@@ -108,6 +109,18 @@ h1 {
 }
 
 .network-primary { background: #55d5dc; color: #072127; }
+
+.network-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.network-secondary {
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  color: var(--white);
+}
 
 .catalog-section {
   width: min(1160px, calc(100% - 32px));
