@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS suggestions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
   text TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'new',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -36,6 +37,10 @@ export class HubStore {
     fs.mkdirSync(path.dirname(absolute), { recursive: true });
     this.db = new DatabaseSync(absolute);
     this.db.exec(SCHEMA);
+    const suggestionColumns = this.db.prepare("PRAGMA table_info(suggestions)").all();
+    if (!suggestionColumns.some((column) => column.name === "status")) {
+      this.db.exec("ALTER TABLE suggestions ADD COLUMN status TEXT NOT NULL DEFAULT 'new'");
+    }
   }
 
   close() {
@@ -60,6 +65,30 @@ export class HubStore {
     this.db.prepare("INSERT INTO suggestions (user_id, text) VALUES (?, ?)").run(userId, text);
   }
 
+  recentSuggestions(limit = 10, status = "new") {
+    return this.db.prepare(`
+      SELECT suggestions.id, suggestions.user_id, users.username, suggestions.text,
+        suggestions.status, suggestions.created_at
+      FROM suggestions LEFT JOIN users ON users.id = suggestions.user_id
+      WHERE suggestions.status = ?
+      ORDER BY suggestions.id DESC LIMIT ?
+    `).all(status, limit);
+  }
+
+  reviewSuggestion(id, status) {
+    if (!new Set(["planned", "rejected"]).has(status)) return false;
+    return this.db.prepare("UPDATE suggestions SET status = ? WHERE id = ? AND status = 'new'")
+      .run(status, id).changes === 1;
+  }
+
+  popularProducts(limit = 3, days = 30) {
+    return this.db.prepare(`
+      SELECT product_id, COUNT(*) AS opens
+      FROM opens WHERE created_at >= datetime('now', ?)
+      GROUP BY product_id ORDER BY opens DESC, product_id LIMIT ?
+    `).all(`-${days} days`, limit);
+  }
+
   sourceStats(limit = 10) {
     return this.db.prepare(`
       SELECT source, COUNT(*) AS users FROM users
@@ -71,7 +100,8 @@ export class HubStore {
     return {
       users: this.db.prepare("SELECT COUNT(*) AS count FROM users").get().count,
       opens: this.db.prepare("SELECT COUNT(*) AS count FROM opens").get().count,
-      suggestions: this.db.prepare("SELECT COUNT(*) AS count FROM suggestions").get().count
+      suggestions: this.db.prepare("SELECT COUNT(*) AS count FROM suggestions").get().count,
+      pendingSuggestions: this.db.prepare("SELECT COUNT(*) AS count FROM suggestions WHERE status = 'new'").get().count
     };
   }
 

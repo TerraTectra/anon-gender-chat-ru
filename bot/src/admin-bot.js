@@ -39,7 +39,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     }
     if (hubStore) {
       const hub = hubStore.stats();
-      parts.push(`TerraTectra Bots\nПользователей: ${hub.users}\nПереходов к ботам: ${hub.opens}\nПредложений: ${hub.suggestions}`);
+      parts.push(`TerraTectra Bots\nПользователей: ${hub.users}\nПереходов к ботам: ${hub.opens}\nПредложений: ${hub.suggestions}\nНовых идей: ${hub.pendingSuggestions}`);
     }
     return parts.join("\n\n");
   }
@@ -103,6 +103,30 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   bot.command("growth", (ctx) => ctx.reply(allGrowthText(), { reply_markup: adminKeyboard }));
   bot.hears("📈 Рост", (ctx) => ctx.reply(allGrowthText(), { reply_markup: adminKeyboard }));
   bot.command("sources", (ctx) => ctx.reply(allSourcesText(), { reply_markup: adminKeyboard }));
+
+  async function sendIdeas(ctx) {
+    if (!hubStore) return ctx.reply("Хаб не подключён.", { reply_markup: adminKeyboard });
+    const ideas = hubStore.recentSuggestions(10);
+    if (!ideas.length) return ctx.reply("Новых идей для ботов нет.", { reply_markup: adminKeyboard });
+    for (const idea of ideas) {
+      const author = idea.username ? `@${idea.username}` : String(idea.user_id);
+      const keyboard = new InlineKeyboard()
+        .text("В план", `idea:planned:${idea.id}`)
+        .text("Отклонить", `idea:rejected:${idea.id}`);
+      await ctx.reply(`Идея #${idea.id}\nОт: ${author}\n\n${idea.text}`, { reply_markup: keyboard });
+    }
+  }
+
+  bot.command("ideas", sendIdeas);
+  bot.hears("💡 Идеи", sendIdeas);
+
+  bot.callbackQuery(/^idea:(planned|rejected):(\d+)$/, async (ctx) => {
+    const status = ctx.match[1];
+    const id = Number(ctx.match[2]);
+    const updated = hubStore?.reviewSuggestion(id, status);
+    await ctx.answerCallbackQuery(updated ? "Статус сохранён" : "Идея уже обработана");
+    if (updated) await ctx.editMessageText(`Идея #${id}: ${status === "planned" ? "добавлена в план" : "отклонена"}.`);
+  });
 
   async function sendReportsForStore(ctx, reportStore, brand, callbackPrefix) {
     const reports = reportStore.recentReports(10);

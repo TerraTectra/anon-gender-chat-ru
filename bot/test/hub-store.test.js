@@ -13,10 +13,16 @@ test("hub stores users, product opens and suggestions", () => {
   store.recordOpen(10, "focus");
   store.addSuggestion(10, "Бот для планирования питания");
 
-  assert.deepEqual(store.stats(), { users: 1, opens: 1, suggestions: 1 });
+  assert.deepEqual(store.stats(), { users: 1, opens: 1, suggestions: 1, pendingSuggestions: 1 });
   const [source] = store.sourceStats();
   assert.equal(source.source, "src_launch");
   assert.equal(source.users, 1);
+  assert.equal(store.popularProducts()[0].product_id, "focus");
+  const [idea] = store.recentSuggestions();
+  assert.equal(idea.text, "Бот для планирования питания");
+  assert.equal(store.reviewSuggestion(idea.id, "planned"), true);
+  assert.equal(store.reviewSuggestion(idea.id, "rejected"), false);
+  assert.equal(store.stats().pendingSuggestions, 0);
 
   store.close();
   fs.rmSync(directory, { recursive: true, force: true });
