@@ -48,5 +48,7 @@ export const adminKeyboard = new Keyboard()
   .text("🚩 Жалобы")
   .row()
   .text("📈 Рост")
+  .text("💡 Идеи")
+  .row()
   .text("🔄 Обновить")
   .resized();

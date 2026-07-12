@@ -10,6 +10,8 @@ function homeKeyboard() {
     .text("✨ Подобрать за меня", "hub:recommend")
     .text("📚 Все боты", "hub:category:all")
     .row()
+    .text("🔥 Популярное", "hub:popular")
+    .row()
     .text("💡 Предложить нового бота", "hub:suggest");
 }
 
@@ -75,6 +77,18 @@ export function createHubBot(token, dbPath) {
         .row()
         .text("Другой вариант", "hub:recommend")
         .text("← В меню", "hub:home")
+    });
+  });
+
+  bot.callbackQuery("hub:popular", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const ranked = store.popularProducts();
+    const selected = ranked
+      .map((row) => products.find((product) => product.id === row.product_id))
+      .filter(Boolean);
+    const items = selected.length ? selected : products.slice(0, 3);
+    await ctx.editMessageText(`Популярное в TerraTectra Bots\n\n${items.map((product, index) => `${index + 1}. ${product.icon} ${product.name}\n${product.tagline}`).join("\n\n")}`, {
+      reply_markup: productKeyboard(items)
     });
   });
 
