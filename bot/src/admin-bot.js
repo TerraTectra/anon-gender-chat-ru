@@ -57,6 +57,22 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     return `Метрики за последние 7 дней\n\n${parts.join("\n\n")}`;
   }
 
+  function allSourcesText() {
+    const products = [
+      ["Анонимный чат", store],
+      ["English Talk Match", englishStore],
+      ["Focus Sprint", focusStore],
+      ["Game Mate", gameStore],
+      ["Карманный бюджет", budgetStore]
+    ];
+    const parts = products.filter(([, productStore]) => productStore).map(([name, productStore]) => {
+      const rows = productStore.sourceStats(10);
+      const lines = rows.length ? rows.map((row) => `${row.source}: ${row.users}`) : ["источников пока нет"];
+      return `${name}\n${lines.join("\n")}`;
+    });
+    return `Источники пользователей\n\n${parts.join("\n\n")}`;
+  }
+
   bot.use(async (ctx, next) => {
     if (!ctx.from) return;
     if (ctx.message?.text === "/id") {
@@ -75,6 +91,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   bot.hears(["📊 Статистика", "🔄 Обновить"], (ctx) => ctx.reply(allStatsText(), { reply_markup: adminKeyboard }));
   bot.command("growth", (ctx) => ctx.reply(allGrowthText(), { reply_markup: adminKeyboard }));
   bot.hears("📈 Рост", (ctx) => ctx.reply(allGrowthText(), { reply_markup: adminKeyboard }));
+  bot.command("sources", (ctx) => ctx.reply(allSourcesText(), { reply_markup: adminKeyboard }));
 
   async function sendReportsForStore(ctx, reportStore, brand, callbackPrefix) {
     const reports = reportStore.recentReports(10);

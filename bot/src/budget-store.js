@@ -73,6 +73,13 @@ export class BudgetStore {
       .get(`ref_${id}`).count;
   }
 
+  sourceStats(limit = 10) {
+    return this.db.prepare(`
+      SELECT source, COUNT(*) AS users FROM users
+      WHERE source IS NOT NULL GROUP BY source ORDER BY users DESC, source LIMIT ?
+    `).all(limit);
+  }
+
   addEntry(userId, type, amountCents, category, note, createdAt = Math.floor(Date.now() / 1000)) {
     const result = this.db.prepare(`
       INSERT INTO entries (user_id, type, amount_cents, category, note, created_at)

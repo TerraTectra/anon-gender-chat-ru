@@ -97,6 +97,13 @@ export class LanguageStore {
       .get(`ref_${id}`).count;
   }
 
+  sourceStats(limit = 10) {
+    return this.db.prepare(`
+      SELECT source, COUNT(*) AS users FROM users
+      WHERE source IS NOT NULL GROUP BY source ORDER BY users DESC, source LIMIT ?
+    `).all(limit);
+  }
+
   recordEvent(userId, type) {
     this.db.prepare("INSERT INTO events (user_id, type) VALUES (?, ?)").run(userId, type);
   }

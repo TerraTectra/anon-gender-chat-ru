@@ -1,6 +1,7 @@
 import { Bot, Keyboard, session } from "grammy";
 import { FocusStore } from "./focus-store.js";
 import { catalogLabel, showCatalog } from "./catalog.js";
+import { parseStartSource } from "./tracking.js";
 
 const labels = {
   short: "⏱ 25 минут",
@@ -88,9 +89,7 @@ export function createFocusBot(token, dbPath) {
   }
 
   bot.command("start", async (ctx) => {
-    const parameter = ctx.match?.trim() || "";
-    const referral = parameter.match(/^ref_(\d+)$/);
-    const source = referral && referral[1] !== String(ctx.from.id) ? parameter : null;
+    const source = parseStartSource(ctx.match, ctx.from.id);
     store.upsertUser(ctx.from.id, ctx.from.username, source);
     await showMenu(ctx);
   });

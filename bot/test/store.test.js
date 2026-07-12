@@ -102,6 +102,8 @@ test("referral counts are tied to the original inviter", () => {
 
     assert.equal(store.invitedCount(1), 2);
     assert.equal(store.invitedCount(999), 0);
+    assert.equal(store.sourceStats()[0].source, "ref_1");
+    assert.equal(store.sourceStats()[0].users, 2);
     assert.equal(store.growthStats().starts7, 1);
     assert.equal(store.growthStats().searches7, 1);
   });

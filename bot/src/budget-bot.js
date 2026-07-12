@@ -1,6 +1,7 @@
 import { Bot, InlineKeyboard, InputFile, Keyboard, session } from "grammy";
 import { BudgetStore } from "./budget-store.js";
 import { catalogLabel, showCatalog } from "./catalog.js";
+import { parseStartSource } from "./tracking.js";
 
 const labels = {
   expense: "➖ Расход",
@@ -153,9 +154,7 @@ export function createBudgetBot(token, dbPath) {
   }
 
   bot.command("start", async (ctx) => {
-    const parameter = ctx.match?.trim() || "";
-    const referral = parameter.match(/^ref_(\d+)$/);
-    const source = referral && referral[1] !== String(ctx.from.id) ? parameter : null;
+    const source = parseStartSource(ctx.match, ctx.from.id);
     store.upsertUser(ctx.from.id, ctx.from.username, source);
     await showMenu(ctx);
   });
