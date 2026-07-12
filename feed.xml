@@ -5,13 +5,13 @@
     <link>https://terratectra.github.io/anon-gender-chat-ru/</link>
     <description>Анонимный Telegram-бот для рандомного поиска собеседника, фильтров по полу и возрасту и общения без обязательной рекламы.</description>
     <language>ru</language>
-    <lastBuildDate>Sat, 02 May 2026 00:00:00 +0300</lastBuildDate>
+    <lastBuildDate>Sun, 12 Jul 2026 00:00:00 +0300</lastBuildDate>
     <item>
-      <title>Вечер анонимного чата 2 мая в 21:00 МСК</title>
+      <title>Вечерний анонимный чат с 20:00 до 23:00 МСК</title>
       <link>https://terratectra.github.io/anon-gender-chat-ru/vecher-anonimnogo-chata.html</link>
       <guid>https://terratectra.github.io/anon-gender-chat-ru/vecher-anonimnogo-chata.html</guid>
-      <pubDate>Sat, 02 May 2026 00:00:00 +0300</pubDate>
-      <description>Собираем пользователей в одно время, чтобы рандомный поиск и фильтры быстрее находили собеседников.</description>
+      <pubDate>Sun, 12 Jul 2026 00:00:00 +0300</pubDate>
+      <description>Вечерний слот помогает пользователям запускать рандомный поиск и фильтры одновременно.</description>
     </item>
     <item>
       <title>Как найти собеседника в Telegram</title>
@@ -43,3 +43,4 @@
     </item>
   </channel>
 </rss>
+
