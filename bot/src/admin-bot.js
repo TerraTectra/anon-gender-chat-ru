@@ -5,6 +5,7 @@ import { FocusStore } from "./focus-store.js";
 import { GameStore } from "./game-store.js";
 import { LanguageStore } from "./language-store.js";
 import { HubStore } from "./hub-store.js";
+import { TaskStore } from "./task-store.js";
 import { Store } from "./store.js";
 
 function parseAdmins(value = "") {
@@ -22,6 +23,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   const gameStore = options.gameDbPath ? new GameStore(options.gameDbPath) : null;
   const budgetStore = options.budgetDbPath ? new BudgetStore(options.budgetDbPath) : null;
   const hubStore = options.hubDbPath ? new HubStore(options.hubDbPath) : null;
+  const taskStore = options.taskDbPath ? new TaskStore(options.taskDbPath) : null;
   const admins = parseAdmins(adminIds);
   const bot = new Bot(token);
 
@@ -40,6 +42,10 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     if (hubStore) {
       const hub = hubStore.stats();
       parts.push(`TerraTectra Bots\nПользователей: ${hub.users}\nПереходов к ботам: ${hub.opens}\nПредложений: ${hub.suggestions}\nНовых идей: ${hub.pendingSuggestions}`);
+    }
+    if (taskStore) {
+      const tasks = taskStore.stats();
+      parts.push(`Task Pulse\nПользователей: ${tasks.users}\nАктивных задач: ${tasks.active}\nВыполнено: ${tasks.done}\nЗаблокировано: ${tasks.banned}`);
     }
     return parts.join("\n\n");
   }
@@ -64,6 +70,10 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       const growth = hubStore.growthStats();
       parts.push(`TerraTectra Bots\nНовые сегодня: ${growth.newToday}\nНовые за 7 дней: ${growth.new7}\nПереходы к ботам: ${growth.opens7}\nПредложения: ${growth.suggestions7}`);
     }
+    if (taskStore) {
+      const growth = taskStore.growthStats();
+      parts.push(`Task Pulse\nНовые сегодня: ${growth.newToday}\nНовые за 7 дней: ${growth.new7}\nПо приглашениям: ${growth.referred}\nСоздано задач: ${growth.tasks7}\nВыполнено: ${growth.done7}`);
+    }
     return `Метрики за последние 7 дней\n\n${parts.join("\n\n")}`;
   }
 
@@ -74,7 +84,8 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       ["Focus Sprint", focusStore],
       ["Game Mate", gameStore],
       ["Карманный бюджет", budgetStore],
-      ["TerraTectra Bots", hubStore]
+      ["TerraTectra Bots", hubStore],
+      ["Task Pulse", taskStore]
     ];
     const parts = products.filter(([, productStore]) => productStore).map(([name, productStore]) => {
       const rows = productStore.sourceStats(10);
@@ -159,6 +170,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     focusStore?.banUser(userId);
     gameStore?.banUser(userId);
     budgetStore?.banUser(userId);
+    taskStore?.banUser(userId);
     await ctx.reply(`Пользователь ${userId} заблокирован.`);
   });
 
@@ -170,6 +182,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     focusStore?.unbanUser(userId);
     gameStore?.unbanUser(userId);
     budgetStore?.unbanUser(userId);
+    taskStore?.unbanUser(userId);
     await ctx.reply(`Пользователь ${userId} разблокирован.`);
   });
 
@@ -181,6 +194,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     focusStore?.banUser(userId);
     gameStore?.banUser(userId);
     budgetStore?.banUser(userId);
+    taskStore?.banUser(userId);
     store.reviewReport(reportId);
     await ctx.answerCallbackQuery("Пользователь заблокирован во всех ботах");
     await ctx.editMessageText(`Жалоба #${reportId}: пользователь ${userId} заблокирован.`);
@@ -202,6 +216,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     focusStore?.banUser(userId);
     gameStore?.banUser(userId);
     budgetStore?.banUser(userId);
+    taskStore?.banUser(userId);
     await ctx.answerCallbackQuery("Пользователь заблокирован во всех ботах");
     await ctx.editMessageText(`English Talk Match, жалоба #${reportId}: пользователь ${userId} заблокирован.`);
   });
@@ -222,6 +237,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     englishStore?.banUser(userId);
     focusStore?.banUser(userId);
     budgetStore?.banUser(userId);
+    taskStore?.banUser(userId);
     await ctx.answerCallbackQuery("Пользователь заблокирован во всех ботах");
     await ctx.editMessageText(`Game Mate, жалоба #${reportId}: пользователь ${userId} заблокирован.`);
   });
