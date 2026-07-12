@@ -1,0 +1,44 @@
+# Telegram Bot Network
+
+Одна Node.js-служба запускает пользовательские продукты и общую закрытую админку. Данные каждого продукта хранятся в отдельной SQLite-базе.
+
+## Продукты
+
+- `@anon_gender_chat_ru_bot` — анонимный чат с возрастным разделением.
+- `@EnglishTalkMatchBot` — поиск партнёра для практики английского.
+- `@FocusSprintTimerBot` — устойчивые к перезапуску фокус-таймеры.
+- `@GameMateFinderRuBot` — поиск игровых напарников.
+- `@PocketBudgetRuBot` — учёт доходов и расходов с CSV-экспортом.
+- `@anon_gender_chat_ru_admin_bot` — статистика, рост, жалобы и общие блокировки.
+
+## Надёжность
+
+- `AnonGenderChatBot` держит сеть запущенной и перезапускает процесс после сбоя.
+- `AnonGenderChatHealthCheck` проверяет `data/health.json` каждые пять минут.
+- `AnonGenderChatBackup` ежедневно в 03:00 создаёт согласованные SQLite-копии.
+- Копии хранятся в `data/backups` 14 дней.
+- Вывод процесса записывается в ежедневные файлы `logs/bot-YYYY-MM-DD.log`.
+
+## Установка
+
+1. Установите Node.js 22 или новее.
+2. Выполните `npm install`.
+3. Создайте `.env` по образцу `.env.example` и добавьте токены.
+4. Запустите `install-autostart.ps1`.
+
+Секреты, базы, резервные копии, логи и `node_modules` исключены из Git.
+
+## Проверка
+
+```powershell
+npm test
+node --check src/index.js
+node scripts/backup.mjs
+```
+
+В админ-боте доступны:
+
+- `/stats` — текущее состояние;
+- `/growth` — продуктовые метрики за семь дней;
+- `/reports` — жалобы из чат-ботов;
+- `/ban ID` и `/unban ID` — блокировка во всей сети.
