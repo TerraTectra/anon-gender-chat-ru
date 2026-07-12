@@ -20,4 +20,3 @@ if (-not (Test-Path -LiteralPath "node_modules")) {
 }
 
 npm start
-

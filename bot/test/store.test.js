@@ -61,3 +61,48 @@ test("a report blocks future matches", () => {
   });
 });
 
+test("an admin ban disconnects the user and excludes them from matching", () => {
+  withStore((store) => {
+    for (const [id, gender] of [[1, "male"], [2, "female"], [3, "female"]]) {
+      store.upsertUser(id, String(id));
+      store.setProfile(id, { gender, age: 25 });
+    }
+    store.enqueue(1, "random");
+    store.enqueue(2, "random");
+    store.banUser(2);
+    assert.equal(store.isBanned(2), true);
+    assert.equal(store.getUser(1).partner_id, null);
+    assert.equal(store.enqueue(1, "random").status, "waiting");
+    assert.equal(store.enqueue(3, "random").status, "matched");
+    assert.equal(store.stats().banned, 1);
+    store.unbanUser(2);
+    assert.equal(store.isBanned(2), false);
+  });
+});
+
+test("reviewing a report removes it from the admin queue", () => {
+  withStore((store) => {
+    store.upsertUser(1, "first");
+    store.upsertUser(2, "second");
+    store.reportAndBlock(1, 2);
+    const [report] = store.recentReports();
+    store.reviewReport(report.id);
+    assert.equal(store.stats().reports, 0);
+  });
+});
+
+test("referral counts are tied to the original inviter", () => {
+  withStore((store) => {
+    store.upsertUser(1, "inviter");
+    store.upsertUser(2, "friend", "ref_1");
+    store.upsertUser(3, "another-friend", "ref_1");
+    store.upsertUser(2, "friend", "ref_999");
+    store.recordEvent(1, "start");
+    store.recordEvent(1, "search");
+
+    assert.equal(store.invitedCount(1), 2);
+    assert.equal(store.invitedCount(999), 0);
+    assert.equal(store.growthStats().starts7, 1);
+    assert.equal(store.growthStats().searches7, 1);
+  });
+});

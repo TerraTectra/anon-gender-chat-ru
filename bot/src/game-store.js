@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { ageGroup, queuesAreCompatible } from "./matching.js";
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -10,13 +9,13 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY,
   username TEXT,
-  gender TEXT CHECK (gender IN ('male', 'female')),
-  age INTEGER CHECK (age BETWEEN 12 AND 99),
+  age_group TEXT CHECK (age_group IN ('minor', 'adult')),
+  platform TEXT CHECK (platform IN ('pc', 'playstation', 'xbox', 'mobile')),
+  game_key TEXT,
+  game_label TEXT,
+  play_style TEXT CHECK (play_style IN ('casual', 'ranked', 'any')),
   partner_id INTEGER,
   state TEXT NOT NULL DEFAULT 'idle',
-  filter_gender TEXT NOT NULL DEFAULT 'any',
-  filter_min_age INTEGER NOT NULL DEFAULT 12,
-  filter_max_age INTEGER NOT NULL DEFAULT 99,
   source TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -24,10 +23,6 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS queue (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  mode TEXT NOT NULL CHECK (mode IN ('random', 'filtered')),
-  target_gender TEXT NOT NULL DEFAULT 'any',
-  min_age INTEGER NOT NULL,
-  max_age INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -42,16 +37,8 @@ CREATE TABLE IF NOT EXISTS reports (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   reporter_id INTEGER NOT NULL,
   reported_id INTEGER NOT NULL,
-  reason TEXT NOT NULL DEFAULT 'user_report',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   reviewed_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS filtered_usage (
-  user_id INTEGER NOT NULL,
-  usage_date TEXT NOT NULL,
-  matches INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (user_id, usage_date)
 );
 
 CREATE TABLE IF NOT EXISTS bans (
@@ -66,12 +53,20 @@ CREATE TABLE IF NOT EXISTS events (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_queue_created ON queue(created_at);
-CREATE INDEX IF NOT EXISTS idx_reports_reviewed ON reports(reviewed_at, created_at);
-CREATE INDEX IF NOT EXISTS idx_events_type_date ON events(type, created_at);
+CREATE INDEX IF NOT EXISTS idx_game_queue ON queue(created_at);
+CREATE INDEX IF NOT EXISTS idx_game_match ON users(age_group, platform, game_key, play_style);
+CREATE INDEX IF NOT EXISTS idx_game_events ON events(type, created_at);
 `;
 
-export class Store {
+export function normalizeGame(value) {
+  return value.toLowerCase().replace(/[^a-zа-яё0-9]+/giu, " ").trim().replace(/\s+/g, " ");
+}
+
+function stylesCompatible(left, right) {
+  return left === "any" || right === "any" || left === right;
+}
+
+export class GameStore {
   constructor(filename) {
     const absolute = path.resolve(filename);
     fs.mkdirSync(path.dirname(absolute), { recursive: true });
@@ -99,21 +94,13 @@ export class Store {
   }
 
   setProfile(id, patch) {
-    const allowed = new Set(["gender", "age", "state", "filter_gender", "filter_min_age", "filter_max_age"]);
+    const allowed = new Set(["age_group", "platform", "game_key", "game_label", "play_style", "state"]);
     const entries = Object.entries(patch).filter(([key]) => allowed.has(key));
     if (!entries.length) return this.getUser(id);
     const sql = entries.map(([key]) => `${key} = ?`).join(", ");
     this.db.prepare(`UPDATE users SET ${sql}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
       .run(...entries.map(([, value]) => value), id);
     return this.getUser(id);
-  }
-
-  filteredRemaining(id) {
-    const row = this.db.prepare(`
-      SELECT matches FROM filtered_usage
-      WHERE user_id = ? AND usage_date = date('now')
-    `).get(id);
-    return Math.max(0, 50 - Number(row?.matches ?? 0));
   }
 
   invitedCount(id) {
@@ -140,41 +127,23 @@ export class Store {
     };
   }
 
-  incrementFiltered(id) {
-    this.db.prepare(`
-      INSERT INTO filtered_usage (user_id, usage_date, matches)
-      VALUES (?, date('now'), 1)
-      ON CONFLICT(user_id, usage_date) DO UPDATE SET matches = matches + 1
-    `).run(id);
-  }
-
-  enqueue(userId, mode, targetGender = "any", minAge = 12, maxAge = 99) {
-    const current = this.getUser(userId);
-    if (!current?.gender || !current?.age) return { status: "profile_required" };
-    if (mode === "filtered" && this.filteredRemaining(userId) <= 0) {
-      return { status: "limit" };
-    }
-
+  enqueue(userId) {
+    const user = this.getUser(userId);
+    if (!user?.age_group || !user?.platform || !user?.game_key || !user?.play_style) return { status: "profile_required" };
     this.disconnect(userId);
-    this.db.prepare(`
-      INSERT OR REPLACE INTO queue (user_id, mode, target_gender, min_age, max_age, created_at)
-      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `).run(userId, mode, targetGender, minAge, maxAge);
+    this.db.prepare("INSERT OR REPLACE INTO queue (user_id, created_at) VALUES (?, CURRENT_TIMESTAMP)").run(userId);
     this.setProfile(userId, { state: "searching" });
     return this.tryMatch(userId);
   }
 
   tryMatch(userId) {
     const user = this.getUser(userId);
-    const ownQueue = this.db.prepare("SELECT * FROM queue WHERE user_id = ?").get(userId);
-    if (!ownQueue) return { status: "waiting" };
-
     const candidates = this.db.prepare(`
-      SELECT u.*, q.mode AS q_mode, q.target_gender AS q_target_gender,
-             q.min_age AS q_min_age, q.max_age AS q_max_age
-      FROM queue q
-      JOIN users u ON u.id = q.user_id
+      SELECT u.* FROM queue q JOIN users u ON u.id = q.user_id
       WHERE q.user_id != ?
+        AND u.age_group = ?
+        AND u.platform = ?
+        AND u.game_key = ?
         AND u.partner_id IS NULL
         AND NOT EXISTS (SELECT 1 FROM bans x WHERE x.user_id = u.id)
         AND NOT EXISTS (
@@ -183,26 +152,8 @@ export class Store {
              OR (b.user_id = u.id AND b.blocked_user_id = ?)
         )
       ORDER BY q.created_at
-    `).all(userId, userId, userId);
-
-    const leftQueue = {
-      mode: ownQueue.mode,
-      targetGender: ownQueue.target_gender,
-      minAge: ownQueue.min_age,
-      maxAge: ownQueue.max_age
-    };
-    const match = candidates.find((candidate) => queuesAreCompatible(
-      leftQueue,
-      { gender: user.gender, age: user.age },
-      {
-        mode: candidate.q_mode,
-        targetGender: candidate.q_target_gender,
-        minAge: candidate.q_min_age,
-        maxAge: candidate.q_max_age
-      },
-      { gender: candidate.gender, age: candidate.age }
-    ));
-
+    `).all(userId, user.age_group, user.platform, user.game_key, userId, userId);
+    const match = candidates.find((candidate) => stylesCompatible(user.play_style, candidate.play_style));
     if (!match) return { status: "waiting" };
 
     this.db.exec("BEGIN IMMEDIATE");
@@ -218,8 +169,6 @@ export class Store {
       this.db.prepare("DELETE FROM queue WHERE user_id IN (?, ?)").run(userId, match.id);
       this.db.prepare("UPDATE users SET partner_id = ?, state = 'chatting' WHERE id = ?").run(match.id, userId);
       this.db.prepare("UPDATE users SET partner_id = ?, state = 'chatting' WHERE id = ?").run(userId, match.id);
-      if (ownQueue.mode === "filtered") this.incrementFiltered(userId);
-      if (match.q_mode === "filtered") this.incrementFiltered(match.id);
       this.db.exec("COMMIT");
       return { status: "matched", partnerId: match.id };
     } catch (error) {
@@ -232,9 +181,7 @@ export class Store {
     const user = this.getUser(userId);
     this.db.prepare("DELETE FROM queue WHERE user_id = ?").run(userId);
     this.db.prepare("UPDATE users SET partner_id = NULL, state = 'idle' WHERE id = ?").run(userId);
-    if (user?.partner_id) {
-      this.db.prepare("UPDATE users SET partner_id = NULL, state = 'idle' WHERE id = ?").run(user.partner_id);
-    }
+    if (user?.partner_id) this.db.prepare("UPDATE users SET partner_id = NULL, state = 'idle' WHERE id = ?").run(user.partner_id);
     return user?.partner_id ?? null;
   }
 
@@ -273,7 +220,7 @@ export class Store {
 
   recentReports(limit = 10) {
     return this.db.prepare(`
-      SELECT id, reporter_id, reported_id, reason, created_at
+      SELECT id, reporter_id, reported_id, created_at
       FROM reports WHERE reviewed_at IS NULL
       ORDER BY created_at DESC LIMIT ?
     `).all(limit);

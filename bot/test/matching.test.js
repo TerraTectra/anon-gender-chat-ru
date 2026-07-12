@@ -36,4 +36,3 @@ test("filtered queues are checked in both directions", () => {
   );
   assert.equal(profileMatches(manQueue, { gender: "male", age: 24 }), false);
 });
-

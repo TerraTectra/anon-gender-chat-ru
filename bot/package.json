@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
+    "start:user": "node src/user-bot-standalone.js",
     "dev": "node --watch src/index.js",
     "test": "node --test"
   },
@@ -16,4 +17,3 @@
     "grammy": "^1.38.3"
   }
 }
-

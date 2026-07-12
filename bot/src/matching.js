@@ -14,4 +14,3 @@ export function queuesAreCompatible(leftQueue, leftProfile, rightQueue, rightPro
   if (ageGroup(leftProfile.age) !== ageGroup(rightProfile.age)) return false;
   return profileMatches(leftQueue, rightProfile) && profileMatches(rightQueue, leftProfile);
 }
-
