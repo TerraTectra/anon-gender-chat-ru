@@ -7,6 +7,7 @@ import { createEnglishBot } from "./english-bot.js";
 import { createFocusBot } from "./focus-bot.js";
 import { createGameBot } from "./game-bot.js";
 import { createHubBot } from "./hub-bot.js";
+import { createTaskBot } from "./task-bot.js";
 import { createUserBot } from "./user-bot.js";
 
 const token = process.env.BOT_TOKEN?.trim();
@@ -16,6 +17,7 @@ const focusToken = process.env.FOCUS_BOT_TOKEN?.trim();
 const gameToken = process.env.GAME_BOT_TOKEN?.trim();
 const budgetToken = process.env.BUDGET_BOT_TOKEN?.trim();
 const hubToken = process.env.HUB_BOT_TOKEN?.trim();
+const taskToken = process.env.TASK_BOT_TOKEN?.trim();
 
 if (!token) throw new Error("BOT_TOKEN is not set in bot/.env");
 if (!adminToken) throw new Error("ADMIN_BOT_TOKEN is not set in bot/.env");
@@ -27,27 +29,32 @@ const focusDbPath = process.env.FOCUS_DB_PATH || "./data/focus.db";
 const gameDbPath = process.env.GAME_DB_PATH || "./data/game.db";
 const budgetDbPath = process.env.BUDGET_DB_PATH || "./data/budget.db";
 const hubDbPath = process.env.HUB_DB_PATH || "./data/hub.db";
+const taskDbPath = process.env.TASK_DB_PATH || "./data/tasks.db";
 const userBot = createUserBot(token, dbPath);
 const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
   englishDbPath: englishToken ? englishDbPath : null,
   focusDbPath: focusToken ? focusDbPath : null,
   gameDbPath: gameToken ? gameDbPath : null,
   budgetDbPath: budgetToken ? budgetDbPath : null,
-  hubDbPath: hubToken ? hubDbPath : null
+  hubDbPath: hubToken ? hubDbPath : null,
+  taskDbPath: taskToken ? taskDbPath : null
 });
 const englishBot = englishToken ? createEnglishBot(englishToken, englishDbPath) : null;
 const focusBot = focusToken ? createFocusBot(focusToken, focusDbPath) : null;
 const gameBot = gameToken ? createGameBot(gameToken, gameDbPath) : null;
 const budgetBot = budgetToken ? createBudgetBot(budgetToken, budgetDbPath) : null;
 const hubBot = hubToken ? createHubBot(hubToken, hubDbPath) : null;
+const taskBot = taskToken ? createTaskBot(taskToken, taskDbPath) : null;
 focusBot?.startFocusScheduler();
+taskBot?.startTaskScheduler();
 
 const botCount = 2
   + Number(Boolean(englishBot))
   + Number(Boolean(focusBot))
   + Number(Boolean(gameBot))
   + Number(Boolean(budgetBot))
-  + Number(Boolean(hubBot));
+  + Number(Boolean(hubBot))
+  + Number(Boolean(taskBot));
 
 const healthPath = path.resolve(process.env.HEALTH_PATH || "./data/health.json");
 function writeHealth() {
@@ -73,6 +80,8 @@ const shutdown = () => {
   gameBot?.stop();
   budgetBot?.stop();
   hubBot?.stop();
+  taskBot?.stopTaskScheduler();
+  taskBot?.stop();
 };
 
 process.once("SIGINT", shutdown);
@@ -88,4 +97,5 @@ if (focusBot) starts.push(focusBot.start({ drop_pending_updates: false }));
 if (gameBot) starts.push(gameBot.start({ drop_pending_updates: false }));
 if (budgetBot) starts.push(budgetBot.start({ drop_pending_updates: false }));
 if (hubBot) starts.push(hubBot.start({ drop_pending_updates: false }));
+if (taskBot) starts.push(taskBot.start({ drop_pending_updates: false }));
 await Promise.all(starts);

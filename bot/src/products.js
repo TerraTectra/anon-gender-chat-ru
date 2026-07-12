@@ -43,6 +43,15 @@ export const products = [
     icon: "💰",
     tagline: "Простой учёт личных финансов",
     description: "Доходы, расходы, баланс, сводки и CSV-экспорт прямо в Telegram."
+  },
+  {
+    id: "tasks",
+    category: "productivity",
+    name: "Task Pulse",
+    username: "DevTaks_bot",
+    icon: "✅",
+    tagline: "Задачи и напоминания в Telegram",
+    description: "Быстро создаёт задачу, напоминает в нужное время и считает выполненные дела."
   }
 ];
 
