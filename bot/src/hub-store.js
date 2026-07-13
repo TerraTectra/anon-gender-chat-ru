@@ -121,6 +121,14 @@ export class HubStore {
     `).all(`-${days} days`, limit);
   }
 
+  recentProductIds(userId, limit = 5) {
+    return this.db.prepare(`
+      SELECT product_id, MAX(id) AS last_open
+      FROM opens WHERE user_id = ?
+      GROUP BY product_id ORDER BY last_open DESC LIMIT ?
+    `).all(userId, limit).map((row) => row.product_id);
+  }
+
   favoriteIds(userId) {
     return this.db.prepare("SELECT product_id FROM favorites WHERE user_id = ? ORDER BY created_at")
       .all(userId).map((row) => row.product_id);

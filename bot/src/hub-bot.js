@@ -13,6 +13,8 @@ function homeKeyboard() {
     .text("🔥 Популярное", "hub:popular")
     .text("⭐ Мои боты", "hub:favorites")
     .row()
+    .text("🕘 Недавние", "hub:recent")
+    .row()
     .text("🔎 Найти по задаче", "hub:search")
     .row()
     .text("🛠 Заказать бота для бизнеса", "hub:lead:start")
@@ -113,6 +115,11 @@ export function createHubBot(token, dbPath) {
     if (!items.length) return ctx.reply("В избранном пока пусто. Откройте карточку бота и нажмите «Добавить в мои».", { reply_markup: homeKeyboard() });
     return ctx.reply(`Мои боты\n\n${items.map((product) => `${product.icon} ${product.name}\n${product.tagline}`).join("\n\n")}`, { reply_markup: productKeyboard(items, "favorites") });
   });
+  bot.command("recent", async (ctx) => {
+    const items = store.recentProductIds(ctx.from.id).map((id) => products.find((product) => product.id === id)).filter(Boolean);
+    if (!items.length) return ctx.reply("История пока пуста. Откройте любой бот из каталога.", { reply_markup: homeKeyboard() });
+    return ctx.reply(`Недавно открывали\n\n${items.map((product) => `${product.icon} ${product.name}\n${product.tagline}`).join("\n\n")}`, { reply_markup: productKeyboard(items, "recent") });
+  });
   bot.command("invite", async (ctx) => {
     const link = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
     const share = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Полезные Telegram-боты для общения, задач, фокуса и финансов")}`;
@@ -189,6 +196,19 @@ export function createHubBot(token, dbPath) {
     });
   });
 
+  bot.callbackQuery("hub:recent", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const items = store.recentProductIds(ctx.from.id).map((id) => products.find((product) => product.id === id)).filter(Boolean);
+    if (!items.length) {
+      return ctx.editMessageText("История пока пуста. Откройте любой бот из каталога.", {
+        reply_markup: new InlineKeyboard().text("← В главное меню", "hub:home")
+      });
+    }
+    await ctx.editMessageText(`Недавно открывали\n\n${items.map((product) => `${product.icon} ${product.name}\n${product.tagline}`).join("\n\n")}`, {
+      reply_markup: productKeyboard(items, "recent")
+    });
+  });
+
   bot.callbackQuery("hub:search", async (ctx) => {
     await ctx.answerCallbackQuery();
     ctx.session.waitingSearch = true;
@@ -231,7 +251,7 @@ export function createHubBot(token, dbPath) {
     });
   });
 
-  bot.callbackQuery(/^hub:product:(\w+)(?::(category|popular|favorites|search))?$/, async (ctx) => {
+  bot.callbackQuery(/^hub:product:(\w+)(?::(category|popular|favorites|search|recent))?$/, async (ctx) => {
     const product = products.find((item) => item.id === ctx.match[1]);
     if (!product) return ctx.answerCallbackQuery("Бот не найден");
     store.recordOpen(ctx.from.id, product.id, ctx.match[2] || "catalog");
