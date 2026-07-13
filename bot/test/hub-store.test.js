@@ -41,6 +41,8 @@ test("hub stores users, product opens and suggestions", () => {
   assert.equal(store.stats().pendingLeads, 1);
   assert.equal(store.reviewLead(lead.id, "contacted"), true);
   assert.equal(store.reviewLead(lead.id, "won"), false);
+  store.upsertUser(11, "friend", "ref_10");
+  assert.equal(store.invitedCount(10), 1);
 
   store.close();
   fs.rmSync(directory, { recursive: true, force: true });

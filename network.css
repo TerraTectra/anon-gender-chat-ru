@@ -202,6 +202,20 @@ h3 { margin-bottom: 12px; font-size: 24px; }
 .service-band .network-eyebrow { color: var(--green); }
 .service-band .network-primary { flex: 0 0 auto; }
 
+.share-band {
+  padding: 64px max(16px, calc((100% - 1160px) / 2));
+  background: var(--white);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 40px;
+}
+
+.share-band > div { max-width: 760px; }
+.share-band > div > p:not(.network-eyebrow) { margin: 0; color: var(--muted); font-size: 18px; line-height: 1.6; }
+.share-band .network-eyebrow { color: var(--blue); }
+.share-band .network-primary { flex: 0 0 auto; }
+
 .trust-band {
   padding: 64px max(16px, calc((100% - 1160px) / 2));
   background: var(--dark);
@@ -288,7 +302,8 @@ h3 { margin-bottom: 12px; font-size: 24px; }
   .bot-grid { grid-template-columns: 1fr; }
   .bot-card { grid-column: auto; min-height: 300px; }
   .trust-band { grid-template-columns: 1fr; gap: 18px; }
-  .service-band { align-items: flex-start; flex-direction: column; gap: 24px; }
+  .service-band,
+  .share-band { align-items: flex-start; flex-direction: column; gap: 24px; }
   .service-grid { grid-template-columns: 1fr; gap: 20px; }
   .process-list li { grid-template-columns: 40px 1fr; }
   .process-list span { grid-column: 2; }
