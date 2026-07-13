@@ -38,7 +38,9 @@ const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
   budgetDbPath: budgetToken ? budgetDbPath : null,
   hubDbPath: hubToken ? hubDbPath : null,
   taskDbPath: taskToken ? taskDbPath : null,
-  healthPath: process.env.HEALTH_PATH || "./data/health.json"
+  healthPath: process.env.HEALTH_PATH || "./data/health.json",
+  reportStatePath: process.env.ADMIN_REPORT_STATE_PATH || "./data/admin-report-state.json",
+  reportHour: Number(process.env.ADMIN_REPORT_HOUR || 10)
 });
 const englishBot = englishToken ? createEnglishBot(englishToken, englishDbPath) : null;
 const focusBot = focusToken ? createFocusBot(focusToken, focusDbPath) : null;
@@ -48,6 +50,7 @@ const hubBot = hubToken ? createHubBot(hubToken, hubDbPath) : null;
 const taskBot = taskToken ? createTaskBot(taskToken, taskDbPath) : null;
 focusBot?.startFocusScheduler();
 taskBot?.startTaskScheduler();
+adminBot.startDailyReportScheduler();
 
 const botCount = 2
   + Number(Boolean(englishBot))
@@ -74,6 +77,7 @@ const healthTimer = setInterval(writeHealth, 30_000);
 const shutdown = () => {
   clearInterval(healthTimer);
   userBot.stop();
+  adminBot.stopDailyReportScheduler();
   adminBot.stop();
   englishBot?.stop();
   focusBot?.stopFocusScheduler();
