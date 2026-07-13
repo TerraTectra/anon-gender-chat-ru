@@ -61,6 +61,30 @@ export const products = [
   }
 ];
 
+export const contentChannels = [
+  {
+    id: "ai",
+    name: "TerraTectra AI Практика",
+    username: "TerraTectraAI",
+    icon: "🧩",
+    tagline: "Прикладной ИИ и автоматизация без новостного шума"
+  },
+  {
+    id: "focus",
+    name: "TerraTectra Фокус",
+    username: "TerraTectraFocus",
+    icon: "🎯",
+    tagline: "Задачи, внимание и спокойная система работы"
+  },
+  {
+    id: "money",
+    name: "TerraTectra Деньги",
+    username: "TerraTectraMoney",
+    icon: "💰",
+    tagline: "Бытовой учёт денег и устойчивые финансовые привычки"
+  }
+];
+
 export const categories = [
   { id: "communication", label: "💬 Общение и люди" },
   { id: "productivity", label: "🎯 Работа и фокус" },
@@ -78,6 +102,10 @@ export const recommendationIntents = [
 
 export function productLink(product, source = "src_family_catalog") {
   return `https://t.me/${product.username}?start=${source}_${product.id}`;
+}
+
+export function channelLink(channel) {
+  return `https://t.me/${channel.username}`;
 }
 
 export function productsByCategory(category) {

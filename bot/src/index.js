@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createAdminBot } from "./admin-bot.js";
 import { createBudgetBot } from "./budget-bot.js";
+import { ChannelPublisher } from "./channel-publisher.js";
 import { createEnglishBot } from "./english-bot.js";
 import { createFocusBot } from "./focus-bot.js";
 import { createGameBot } from "./game-bot.js";
@@ -31,6 +32,7 @@ const budgetDbPath = process.env.BUDGET_DB_PATH || "./data/budget.db";
 const hubDbPath = process.env.HUB_DB_PATH || "./data/hub.db";
 const taskDbPath = process.env.TASK_DB_PATH || "./data/tasks.db";
 const userBot = createUserBot(token, dbPath);
+let channelPublisher = null;
 const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
   englishDbPath: englishToken ? englishDbPath : null,
   focusDbPath: focusToken ? focusDbPath : null,
@@ -40,8 +42,14 @@ const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
   taskDbPath: taskToken ? taskDbPath : null,
   healthPath: process.env.HEALTH_PATH || "./data/health.json",
   reportStatePath: process.env.ADMIN_REPORT_STATE_PATH || "./data/admin-report-state.json",
-  reportHour: Number(process.env.ADMIN_REPORT_HOUR || 10)
+  reportHour: Number(process.env.ADMIN_REPORT_HOUR || 10),
+  channelStatusProvider: () => channelPublisher?.status() || []
 });
+channelPublisher = new ChannelPublisher(
+  adminBot.api,
+  process.env.CHANNELS_CONFIG_PATH || "./content/channels.json",
+  process.env.CHANNELS_STATE_PATH || "./data/channel-publisher-state.json"
+);
 const englishBot = englishToken ? createEnglishBot(englishToken, englishDbPath) : null;
 const focusBot = focusToken ? createFocusBot(focusToken, focusDbPath) : null;
 const gameBot = gameToken ? createGameBot(gameToken, gameDbPath) : null;
@@ -51,6 +59,7 @@ const taskBot = taskToken ? createTaskBot(taskToken, taskDbPath) : null;
 focusBot?.startFocusScheduler();
 taskBot?.startTaskScheduler();
 adminBot.startDailyReportScheduler();
+channelPublisher.start();
 
 const botCount = 2
   + Number(Boolean(englishBot))
@@ -67,7 +76,8 @@ function writeHealth() {
   fs.writeFileSync(temporary, JSON.stringify({
     status: "running",
     updated_at: new Date().toISOString(),
-    bots: botCount
+    bots: botCount,
+    channels: channelPublisher.status().filter((channel) => channel.enabled).length
   }, null, 2));
   fs.renameSync(temporary, healthPath);
 }
@@ -78,6 +88,7 @@ const shutdown = () => {
   clearInterval(healthTimer);
   userBot.stop();
   adminBot.stopDailyReportScheduler();
+  channelPublisher.stop();
   adminBot.stop();
   englishBot?.stop();
   focusBot?.stopFocusScheduler();

@@ -1,6 +1,6 @@
 import { Bot, InlineKeyboard, session } from "grammy";
 import { HubStore } from "./hub-store.js";
-import { categories, productLink, products, productsByCategory, recommendationIntents, searchProducts } from "./products.js";
+import { categories, channelLink, contentChannels, productLink, products, productsByCategory, recommendationIntents, searchProducts } from "./products.js";
 import { parseStartSource } from "./tracking.js";
 
 function homeKeyboard() {
@@ -14,6 +14,8 @@ function homeKeyboard() {
     .text("⭐ Мои боты", "hub:favorites")
     .row()
     .text("🕘 Недавние", "hub:recent")
+    .row()
+    .text("📢 Полезные каналы", "hub:channels")
     .row()
     .text("🔎 Найти по задаче", "hub:search")
     .row()
@@ -58,6 +60,16 @@ function recommendationKeyboard() {
   return keyboard.text("← В главное меню", "hub:home");
 }
 
+function channelKeyboard() {
+  const keyboard = new InlineKeyboard();
+  for (const channel of contentChannels) keyboard.url(`${channel.icon} ${channel.name} ↗`, channelLink(channel)).row();
+  return keyboard.text("← В главное меню", "hub:home");
+}
+
+function channelText() {
+  return `Каналы TerraTectra\n\n${contentChannels.map((channel) => `${channel.icon} ${channel.name}\n${channel.tagline}`).join("\n\n")}`;
+}
+
 function categoryText(category) {
   const selected = productsByCategory(category);
   const heading = category === "all"
@@ -94,7 +106,7 @@ export function createHubBot(token, dbPath) {
   }
 
   async function showHome(ctx, edit = false) {
-    const text = "TerraTectra Bots\n\nПолезные Telegram-боты в одном месте. Выберите, что пригодится прямо сейчас.";
+    const text = "TerraTectra Bots\n\nПолезные Telegram-боты и каналы в одном месте. Выберите, что пригодится прямо сейчас.";
     const options = { reply_markup: homeKeyboard() };
     if (edit) return ctx.editMessageText(text, options);
     return ctx.reply(text, options);
@@ -120,6 +132,7 @@ export function createHubBot(token, dbPath) {
     if (!items.length) return ctx.reply("История пока пуста. Откройте любой бот из каталога.", { reply_markup: homeKeyboard() });
     return ctx.reply(`Недавно открывали\n\n${items.map((product) => `${product.icon} ${product.name}\n${product.tagline}`).join("\n\n")}`, { reply_markup: productKeyboard(items, "recent") });
   });
+  bot.command("channels", (ctx) => ctx.reply(channelText(), { reply_markup: channelKeyboard() }));
   bot.command("invite", async (ctx) => {
     const link = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
     const share = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Полезные Telegram-боты для общения, задач, фокуса и финансов")}`;
@@ -207,6 +220,11 @@ export function createHubBot(token, dbPath) {
     await ctx.editMessageText(`Недавно открывали\n\n${items.map((product) => `${product.icon} ${product.name}\n${product.tagline}`).join("\n\n")}`, {
       reply_markup: productKeyboard(items, "recent")
     });
+  });
+
+  bot.callbackQuery("hub:channels", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(channelText(), { reply_markup: channelKeyboard() });
   });
 
   bot.callbackQuery("hub:search", async (ctx) => {

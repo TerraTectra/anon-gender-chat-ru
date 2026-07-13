@@ -301,6 +301,19 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     return `Воронка TerraTectra Hub · 30 дней\n\nПользователи: ${funnel.users}\nОткрыли хотя бы один бот: ${funnel.engaged} (${percent(funnel.engaged, funnel.users)}%)\nДобавили в избранное: ${funnel.favorited} (${percent(funnel.favorited, funnel.engaged)}% от открывших)\nОставили заявку: ${funnel.leads} (${percent(funnel.leads, funnel.users)}%)\nВсего переходов: ${funnel.opens}\n\nИнтерес к продуктам\n${productLines.length ? productLines.join("\n") : "Данных пока нет"}`;
   }
 
+  function channelStatusText() {
+    const channels = options.channelStatusProvider?.() || [];
+    if (!channels.length) return "Контентные каналы пока не настроены.";
+    const lines = channels.map((channel) => {
+      const state = channel.enabled ? "включён" : "подготовлен";
+      const last = channel.lastPublishedAt
+        ? new Date(channel.lastPublishedAt).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" })
+        : "публикаций ещё не было";
+      return `${channel.title}\n${state} · ${channel.schedule} МСК · в очереди: ${channel.queued}\nОпубликовано: ${channel.sent} · последнее: ${last}`;
+    });
+    return `Контентная сеть TerraTectra\n\n${lines.join("\n\n")}`;
+  }
+
   bot.use(async (ctx, next) => {
     if (!ctx.from) return;
     if (ctx.message?.text === "/id") {
@@ -336,6 +349,8 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   bot.hears("📣 Кампании", (ctx) => ctx.reply(campaignStatsText(), { reply_markup: adminKeyboard }));
   bot.command("funnel", (ctx) => ctx.reply(hubFunnelText(), { reply_markup: adminKeyboard }));
   bot.hears("📊 Воронка", (ctx) => ctx.reply(hubFunnelText(), { reply_markup: adminKeyboard }));
+  bot.command("channels", (ctx) => ctx.reply(channelStatusText(), { reply_markup: adminKeyboard }));
+  bot.hears("📢 Каналы", (ctx) => ctx.reply(channelStatusText(), { reply_markup: adminKeyboard }));
 
   async function sendIdeas(ctx) {
     if (!hubStore) return ctx.reply("Хаб не подключён.", { reply_markup: adminKeyboard });
