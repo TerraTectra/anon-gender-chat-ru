@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { Bot, InlineKeyboard } from "grammy";
 import { adminKeyboard } from "./keyboards.js";
 import { BudgetStore } from "./budget-store.js";
@@ -26,6 +28,75 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   const taskStore = options.taskDbPath ? new TaskStore(options.taskDbPath) : null;
   const admins = parseAdmins(adminIds);
   const bot = new Bot(token);
+  const healthPath = path.resolve(options.healthPath || "./data/health.json");
+
+  const productKeyboard = new InlineKeyboard()
+    .text("Анонимный чат", "admin_product:anon")
+    .text("English", "admin_product:english")
+    .row()
+    .text("Focus Sprint", "admin_product:focus")
+    .text("Game Mate", "admin_product:game")
+    .row()
+    .text("Бюджет", "admin_product:budget")
+    .text("Task Pulse", "admin_product:tasks")
+    .row()
+    .text("TerraTectra Hub", "admin_product:hub");
+
+  function networkOverviewText() {
+    const chat = store.stats();
+    const english = englishStore?.stats();
+    const focus = focusStore?.stats();
+    const game = gameStore?.stats();
+    const budget = budgetStore?.stats();
+    const hub = hubStore?.stats();
+    const tasks = taskStore?.stats();
+    const productStats = [chat, english, focus, game, budget, hub, tasks].filter(Boolean);
+    const registrations = productStats.reduce((sum, item) => sum + (item.users || 0), 0);
+    const activeNow = (chat.chatting || 0) + (english?.chatting || 0) + (game?.chatting || 0)
+      + (focus?.active || 0) + (tasks?.active || 0);
+    const usefulActions = (focus?.completed || 0) + (budget?.entries || 0) + (tasks?.done || 0)
+      + (hub?.opens || 0);
+    const reports = (chat.reports || 0) + (english?.reports || 0) + (game?.reports || 0);
+
+    return `TerraTectra Admin Hub\n\nПродуктов: ${productStats.length}\nРегистраций в продуктах: ${registrations}\nАктивно сейчас: ${activeNow}\nПолезных действий: ${usefulActions}\n\nНовых лидов: ${hub?.pendingLeads || 0}\nНовых идей: ${hub?.pendingSuggestions || 0}\nНовых жалоб: ${reports}`;
+  }
+
+  function productStatsText(product) {
+    if (product === "anon") return `Анонимный чат\n\n${statsText(store.stats())}\n\n${pairGrowthText("За 7 дней", store.growthStats())}`;
+    if (product === "english" && englishStore) return `English Talk Match\n\n${statsText(englishStore.stats())}\n\n${pairGrowthText("За 7 дней", englishStore.growthStats())}`;
+    if (product === "game" && gameStore) return `Game Mate\n\n${statsText(gameStore.stats())}\n\n${pairGrowthText("За 7 дней", gameStore.growthStats())}`;
+    if (product === "focus" && focusStore) {
+      const current = focusStore.stats();
+      const growth = focusStore.growthStats();
+      return `Focus Sprint\n\nПользователей: ${current.users}\nАктивных сессий: ${current.active}\nЗавершено: ${current.completed}\nФокус-время: ${current.minutes} мин.\nЗаблокировано: ${current.banned}\n\nЗа 7 дней\nНовые: ${growth.new7}\nПо приглашениям: ${growth.referred}\nСессии: ${growth.sessions7}\nЗавершено: ${growth.completed7}`;
+    }
+    if (product === "budget" && budgetStore) {
+      const current = budgetStore.stats();
+      const growth = budgetStore.growthStats();
+      return `Карманный бюджет\n\nПользователей: ${current.users}\nЗаписей: ${current.entries}\nАктивны за 30 дней: ${current.active30}\nЗаблокировано: ${current.banned}\n\nЗа 7 дней\nНовые: ${growth.new7}\nПо приглашениям: ${growth.referred}\nЗаписей: ${growth.entries7}\nАктивных пользователей: ${growth.active7}`;
+    }
+    if (product === "tasks" && taskStore) {
+      const current = taskStore.stats();
+      const growth = taskStore.growthStats();
+      return `Task Pulse\n\nПользователей: ${current.users}\nАктивных задач: ${current.active}\nВыполнено: ${current.done}\nЗаблокировано: ${current.banned}\n\nЗа 7 дней\nНовые: ${growth.new7}\nПо приглашениям: ${growth.referred}\nСоздано задач: ${growth.tasks7}\nВыполнено: ${growth.done7}`;
+    }
+    if (product === "hub" && hubStore) {
+      const current = hubStore.stats();
+      const growth = hubStore.growthStats();
+      return `TerraTectra Bots\n\nПользователей: ${current.users}\nПереходов к ботам: ${current.opens}\nИзбранных: ${current.favorites}\nЛидов: ${current.leads}\nНовых лидов: ${current.pendingLeads}\nПредложений: ${current.suggestions}\nНовых идей: ${current.pendingSuggestions}\n\nЗа 7 дней\nНовые: ${growth.new7}\nПереходы к ботам: ${growth.opens7}\nЛиды: ${growth.leads7}\nПредложения: ${growth.suggestions7}`;
+    }
+    return "Этот продукт пока не подключён к админ-хабу.";
+  }
+
+  function healthText() {
+    try {
+      const health = JSON.parse(fs.readFileSync(healthPath, "utf8"));
+      const updated = health.updated_at ? new Date(health.updated_at).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" }) : "нет данных";
+      return `Состояние системы\n\nСтатус: ${health.status === "running" ? "работает" : health.status}\nЗапущено ботов: ${health.bots ?? "нет данных"}\nПоследний сигнал: ${updated} МСК`;
+    } catch {
+      return "Состояние системы недоступно: файл health.json ещё не создан.";
+    }
+  }
 
   function allStatsText() {
     const parts = [`Анонимный чат\n${statsText(store.stats())}`];
@@ -108,12 +179,23 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     await next();
   });
 
-  bot.command("start", (ctx) => ctx.reply("Админ-панель анонимного чата готова.", { reply_markup: adminKeyboard }));
+  bot.command("start", (ctx) => ctx.reply(networkOverviewText(), { reply_markup: adminKeyboard }));
+  bot.command("overview", (ctx) => ctx.reply(networkOverviewText(), { reply_markup: adminKeyboard }));
+  bot.hears(["🏠 Обзор", "🔄 Обновить"], (ctx) => ctx.reply(networkOverviewText(), { reply_markup: adminKeyboard }));
+  bot.command("products", (ctx) => ctx.reply("Выберите продукт:", { reply_markup: productKeyboard }));
+  bot.hears("🤖 Боты", (ctx) => ctx.reply("Выберите продукт:", { reply_markup: productKeyboard }));
+  bot.callbackQuery(/^admin_product:(anon|english|focus|game|budget|tasks|hub)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(productStatsText(ctx.match[1]), { reply_markup: productKeyboard });
+  });
+  bot.command("health", (ctx) => ctx.reply(healthText(), { reply_markup: adminKeyboard }));
+  bot.hears("💚 Состояние", (ctx) => ctx.reply(healthText(), { reply_markup: adminKeyboard }));
   bot.command("stats", (ctx) => ctx.reply(allStatsText(), { reply_markup: adminKeyboard }));
-  bot.hears(["📊 Статистика", "🔄 Обновить"], (ctx) => ctx.reply(allStatsText(), { reply_markup: adminKeyboard }));
+  bot.hears("📊 Статистика", (ctx) => ctx.reply(allStatsText(), { reply_markup: adminKeyboard }));
   bot.command("growth", (ctx) => ctx.reply(allGrowthText(), { reply_markup: adminKeyboard }));
   bot.hears("📈 Рост", (ctx) => ctx.reply(allGrowthText(), { reply_markup: adminKeyboard }));
   bot.command("sources", (ctx) => ctx.reply(allSourcesText(), { reply_markup: adminKeyboard }));
+  bot.hears("🧭 Источники", (ctx) => ctx.reply(allSourcesText(), { reply_markup: adminKeyboard }));
 
   async function sendIdeas(ctx) {
     if (!hubStore) return ctx.reply("Хаб не подключён.", { reply_markup: adminKeyboard });

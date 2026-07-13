@@ -37,7 +37,8 @@ const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
   gameDbPath: gameToken ? gameDbPath : null,
   budgetDbPath: budgetToken ? budgetDbPath : null,
   hubDbPath: hubToken ? hubDbPath : null,
-  taskDbPath: taskToken ? taskDbPath : null
+  taskDbPath: taskToken ? taskDbPath : null,
+  healthPath: process.env.HEALTH_PATH || "./data/health.json"
 });
 const englishBot = englishToken ? createEnglishBot(englishToken, englishDbPath) : null;
 const focusBot = focusToken ? createFocusBot(focusToken, focusDbPath) : null;

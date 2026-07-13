@@ -150,6 +150,10 @@ export class HubStore {
     `).all(limit);
   }
 
+  invitedCount(userId) {
+    return this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE source = ?").get(`ref_${userId}`).count;
+  }
+
   stats() {
     return {
       users: this.db.prepare("SELECT COUNT(*) AS count FROM users").get().count,

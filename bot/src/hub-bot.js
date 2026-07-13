@@ -17,6 +17,8 @@ function homeKeyboard() {
     .row()
     .text("🛠 Заказать бота для бизнеса", "hub:lead:start")
     .row()
+    .text("🎁 Поделиться хабом", "hub:invite")
+    .row()
     .text("💡 Предложить нового бота", "hub:suggest");
 }
 
@@ -105,6 +107,13 @@ export function createHubBot(token, dbPath) {
     if (!items.length) return ctx.reply("В избранном пока пусто. Откройте карточку бота и нажмите «Добавить в мои».", { reply_markup: homeKeyboard() });
     return ctx.reply(`Мои боты\n\n${items.map((product) => `${product.icon} ${product.name}\n${product.tagline}`).join("\n\n")}`, { reply_markup: productKeyboard(items) });
   });
+  bot.command("invite", async (ctx) => {
+    const link = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
+    const share = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Полезные Telegram-боты для общения, задач, фокуса и финансов")}`;
+    await ctx.reply(`Ваша ссылка:\n${link}\n\nПриглашено пользователей: ${store.invitedCount(ctx.from.id)}.`, {
+      reply_markup: new InlineKeyboard().url("Поделиться ↗", share).row().text("← В главное меню", "hub:home")
+    });
+  });
   bot.command("help", (ctx) => ctx.reply("Выберите категорию или попросите подобрать бота. Каталог будет пополняться только проверенными полезными сервисами.", { reply_markup: homeKeyboard() }));
 
   bot.callbackQuery("hub:home", async (ctx) => {
@@ -145,6 +154,15 @@ export function createHubBot(token, dbPath) {
     const items = selected.length ? selected : products.slice(0, 3);
     await ctx.editMessageText(`Популярное в TerraTectra Bots\n\n${items.map((product, index) => `${index + 1}. ${product.icon} ${product.name}\n${product.tagline}`).join("\n\n")}`, {
       reply_markup: productKeyboard(items)
+    });
+  });
+
+  bot.callbackQuery("hub:invite", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const link = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
+    const share = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Полезные Telegram-боты для общения, задач, фокуса и финансов")}`;
+    await ctx.editMessageText(`Поделитесь семейным хабом.\n\nВаша ссылка:\n${link}\n\nПриглашено пользователей: ${store.invitedCount(ctx.from.id)}.`, {
+      reply_markup: new InlineKeyboard().url("Поделиться ↗", share).row().text("← В главное меню", "hub:home")
     });
   });
 
