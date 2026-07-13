@@ -32,6 +32,13 @@ test("hub stores users, product opens and suggestions", () => {
     { source: "search", opens: 1, users: 1 }
   ]);
   assert.deepEqual(store.recentProductIds(10), ["tasks", "focus"]);
+  assert.deepEqual(store.funnelStats(), {
+    users: 1,
+    engaged: 1,
+    favorited: 0,
+    leads: 0,
+    opens: 2
+  });
   const [idea] = store.recentSuggestions();
   assert.equal(idea.text, "Бот для планирования питания");
   assert.equal(store.reviewSuggestion(idea.id, "planned"), true);
@@ -40,6 +47,10 @@ test("hub stores users, product opens and suggestions", () => {
   assert.equal(store.toggleFavorite(10, "focus"), true);
   assert.equal(store.isFavorite(10, "focus"), true);
   assert.deepEqual(store.favoriteIds(10), ["focus"]);
+  assert.deepEqual(store.productPerformance(), [
+    { product_id: "focus", opens: 1, users: 1, favorites: 1 },
+    { product_id: "tasks", opens: 1, users: 1, favorites: 0 }
+  ]);
   assert.equal(store.toggleFavorite(10, "focus"), false);
   assert.equal(store.favoriteIds(10).length, 0);
   const lead = store.addLead(10, "tester", "Нужен бот для обработки заявок клиентов", "30–70 000 ₽", "до месяца", "src_test_lead");
