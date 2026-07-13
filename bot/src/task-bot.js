@@ -28,13 +28,12 @@ const timingKeyboard = new InlineKeyboard()
   .text("Через 3 часа", "task:when:10800")
   .text("Завтра в 9:00", "task:when:tomorrow")
   .row()
+  .text("Своя дата и время", "task:when:custom")
+  .row()
   .text("Отмена", "task:draft:cancel");
 
 function tomorrowAtNine(now = new Date()) {
-  const date = new Date(now);
-  date.setDate(date.getDate() + 1);
-  date.setHours(9, 0, 0, 0);
-  return Math.floor(date.getTime() / 1000);
+  return parseTaskDue("завтра 09:00", now.getTime());
 }
 
 function formatDue(timestamp) {
@@ -47,11 +46,53 @@ function formatDue(timestamp) {
   }).format(new Date(timestamp * 1000));
 }
 
+function moscowDateParts(nowMs) {
+  const shifted = new Date(nowMs + 3 * 60 * 60 * 1000);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth(),
+    day: shifted.getUTCDate()
+  };
+}
+
+function moscowTimestamp(year, month, day, hour, minute) {
+  return Math.floor(Date.UTC(year, month, day, hour - 3, minute) / 1000);
+}
+
+export function parseTaskDue(value, nowMs = Date.now()) {
+  const input = value.trim().toLowerCase().replace(/\s+/g, " ");
+  const relative = input.match(/^(сегодня|завтра)\s+(?:в\s+)?([01]?\d|2[0-3]):([0-5]\d)$/);
+  const dated = input.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?\s+(?:в\s+)?([01]?\d|2[0-3]):([0-5]\d)$/);
+  const nowSeconds = Math.floor(nowMs / 1000);
+  let timestamp = null;
+
+  if (relative) {
+    const current = moscowDateParts(nowMs);
+    const target = new Date(Date.UTC(current.year, current.month, current.day + Number(relative[1] === "завтра")));
+    timestamp = moscowTimestamp(target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate(), Number(relative[2]), Number(relative[3]));
+  } else if (dated) {
+    const current = moscowDateParts(nowMs);
+    const day = Number(dated[1]);
+    const month = Number(dated[2]) - 1;
+    let year = dated[3] ? Number(dated[3]) : current.year;
+    timestamp = moscowTimestamp(year, month, day, Number(dated[4]), Number(dated[5]));
+    if (!dated[3] && timestamp <= nowSeconds) {
+      year += 1;
+      timestamp = moscowTimestamp(year, month, day, Number(dated[4]), Number(dated[5]));
+    }
+    const check = new Date((timestamp + 3 * 60 * 60) * 1000);
+    if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month || check.getUTCDate() !== day) return null;
+  }
+
+  if (!timestamp || timestamp <= nowSeconds || timestamp > nowSeconds + 366 * 24 * 60 * 60) return null;
+  return timestamp;
+}
+
 export function createTaskBot(token, dbPath) {
   const store = new TaskStore(dbPath);
   const bot = new Bot(token);
   let scheduler = null;
-  bot.use(session({ initial: () => ({ waitingTask: false, draftText: null }) }));
+  bot.use(session({ initial: () => ({ waitingTask: false, waitingDue: false, draftText: null }) }));
 
   bot.use(async (ctx, next) => {
     if (ctx.from && store.isBanned(ctx.from.id)) {
@@ -69,6 +110,7 @@ export function createTaskBot(token, dbPath) {
 
   async function beginTask(ctx) {
     ctx.session.waitingTask = true;
+    ctx.session.waitingDue = false;
     ctx.session.draftText = null;
     await ctx.reply("Напишите задачу одним сообщением. Например: «Позвонить клиенту».");
   }
@@ -123,14 +165,23 @@ export function createTaskBot(token, dbPath) {
     const task = store.addTask(ctx.from.id, ctx.session.draftText, dueAt);
     ctx.session.draftText = null;
     ctx.session.waitingTask = false;
+    ctx.session.waitingDue = false;
     await ctx.answerCallbackQuery("Задача сохранена");
     await ctx.editMessageText(`Задача #${task.id} сохранена.\n\n${task.text}\nНапомню: ${formatDue(task.due_at)}`);
     await ctx.reply("Готово.", { reply_markup: menu });
   });
 
+  bot.callbackQuery("task:when:custom", async (ctx) => {
+    if (!ctx.session.draftText) return ctx.answerCallbackQuery("Сначала напишите задачу");
+    ctx.session.waitingDue = true;
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText("Напишите дату и время по Москве.\n\nПримеры:\nсегодня 18:30\nзавтра 09:00\n25.07 14:00");
+  });
+
   bot.callbackQuery("task:draft:cancel", async (ctx) => {
     ctx.session.draftText = null;
     ctx.session.waitingTask = false;
+    ctx.session.waitingDue = false;
     await ctx.answerCallbackQuery("Отменено");
     await ctx.editMessageText("Создание задачи отменено.");
   });
@@ -154,6 +205,17 @@ export function createTaskBot(token, dbPath) {
   });
 
   bot.on("message:text", async (ctx) => {
+    if (ctx.session.waitingDue && ctx.session.draftText) {
+      const dueAt = parseTaskDue(ctx.message.text);
+      if (!dueAt) {
+        return ctx.reply("Не получилось распознать время. Используйте формат «завтра 09:00» или «25.07 14:00». Дата должна быть в пределах года.");
+      }
+      const task = store.addTask(ctx.from.id, ctx.session.draftText, dueAt);
+      ctx.session.draftText = null;
+      ctx.session.waitingDue = false;
+      await ctx.reply(`Задача #${task.id} сохранена.\n\n${task.text}\nНапомню: ${formatDue(task.due_at)}`, { reply_markup: menu });
+      return;
+    }
     if (!ctx.session.waitingTask) return showMenu(ctx);
     const text = ctx.message.text.trim().replace(/\s+/g, " ");
     if (text.length < 3 || text.length > 300) return ctx.reply("Опишите задачу текстом от 3 до 300 символов.");
