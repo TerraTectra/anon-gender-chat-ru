@@ -41,7 +41,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     }
     if (hubStore) {
       const hub = hubStore.stats();
-      parts.push(`TerraTectra Bots\nПользователей: ${hub.users}\nПереходов к ботам: ${hub.opens}\nИзбранных ботов: ${hub.favorites}\nПредложений: ${hub.suggestions}\nНовых идей: ${hub.pendingSuggestions}`);
+      parts.push(`TerraTectra Bots\nПользователей: ${hub.users}\nПереходов к ботам: ${hub.opens}\nИзбранных ботов: ${hub.favorites}\nЛидов: ${hub.leads}\nНовых лидов: ${hub.pendingLeads}\nПредложений: ${hub.suggestions}\nНовых идей: ${hub.pendingSuggestions}`);
     }
     if (taskStore) {
       const tasks = taskStore.stats();
@@ -68,7 +68,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     }
     if (hubStore) {
       const growth = hubStore.growthStats();
-      parts.push(`TerraTectra Bots\nНовые сегодня: ${growth.newToday}\nНовые за 7 дней: ${growth.new7}\nПереходы к ботам: ${growth.opens7}\nПредложения: ${growth.suggestions7}`);
+      parts.push(`TerraTectra Bots\nНовые сегодня: ${growth.newToday}\nНовые за 7 дней: ${growth.new7}\nПереходы к ботам: ${growth.opens7}\nЛиды: ${growth.leads7}\nПредложения: ${growth.suggestions7}`);
     }
     if (taskStore) {
       const growth = taskStore.growthStats();
@@ -137,6 +137,31 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     const updated = hubStore?.reviewSuggestion(id, status);
     await ctx.answerCallbackQuery(updated ? "Статус сохранён" : "Идея уже обработана");
     if (updated) await ctx.editMessageText(`Идея #${id}: ${status === "planned" ? "добавлена в план" : "отклонена"}.`);
+  });
+
+  async function sendLeads(ctx) {
+    if (!hubStore) return ctx.reply("Хаб не подключён.", { reply_markup: adminKeyboard });
+    const leads = hubStore.recentLeads(10);
+    if (!leads.length) return ctx.reply("Новых лидов нет.", { reply_markup: adminKeyboard });
+    for (const lead of leads) {
+      const contact = lead.username ? `@${lead.username}` : `Telegram ID ${lead.user_id}`;
+      const keyboard = new InlineKeyboard()
+        .text("Связались", `lead:contacted:${lead.id}`)
+        .text("В работу", `lead:won:${lead.id}`)
+        .text("Отклонить", `lead:rejected:${lead.id}`);
+      await ctx.reply(`Лид #${lead.id}\nКонтакт: ${contact}\nБюджет: ${lead.budget}\nСрок: ${lead.deadline}\nИсточник: ${lead.source ?? "не указан"}\n\n${lead.request}`, { reply_markup: keyboard });
+    }
+  }
+
+  bot.command("leads", sendLeads);
+  bot.hears("💼 Лиды", sendLeads);
+
+  bot.callbackQuery(/^lead:(contacted|won|rejected):(\d+)$/, async (ctx) => {
+    const status = ctx.match[1];
+    const id = Number(ctx.match[2]);
+    const updated = hubStore?.reviewLead(id, status);
+    await ctx.answerCallbackQuery(updated ? "Статус сохранён" : "Лид уже обработан");
+    if (updated) await ctx.editMessageText(`Лид #${id}: ${status}.`);
   });
 
   async function sendReportsForStore(ctx, reportStore, brand, callbackPrefix) {

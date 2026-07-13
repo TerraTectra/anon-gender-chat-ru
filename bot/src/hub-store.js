@@ -35,6 +35,18 @@ CREATE TABLE IF NOT EXISTS favorites (
   PRIMARY KEY (user_id, product_id)
 );
 
+CREATE TABLE IF NOT EXISTS leads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  username TEXT,
+  request TEXT NOT NULL,
+  budget TEXT NOT NULL,
+  deadline TEXT NOT NULL,
+  source TEXT,
+  status TEXT NOT NULL DEFAULT 'new',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_hub_opens_product ON opens(product_id, created_at);
 `;
 
@@ -114,6 +126,23 @@ export class HubStore {
     return true;
   }
 
+  addLead(userId, username, request, budget, deadline, source = null) {
+    const result = this.db.prepare(`
+      INSERT INTO leads (user_id, username, request, budget, deadline, source)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(userId, username ?? null, request, budget, deadline, source);
+    return this.db.prepare("SELECT * FROM leads WHERE id = ?").get(result.lastInsertRowid);
+  }
+
+  recentLeads(limit = 10, status = "new") {
+    return this.db.prepare("SELECT * FROM leads WHERE status = ? ORDER BY id DESC LIMIT ?").all(status, limit);
+  }
+
+  reviewLead(id, status) {
+    if (!new Set(["contacted", "won", "rejected"]).has(status)) return false;
+    return this.db.prepare("UPDATE leads SET status = ? WHERE id = ? AND status = 'new'").run(status, id).changes === 1;
+  }
+
   sourceStats(limit = 10) {
     return this.db.prepare(`
       SELECT source, COUNT(*) AS users FROM users
@@ -127,7 +156,9 @@ export class HubStore {
       opens: this.db.prepare("SELECT COUNT(*) AS count FROM opens").get().count,
       suggestions: this.db.prepare("SELECT COUNT(*) AS count FROM suggestions").get().count,
       pendingSuggestions: this.db.prepare("SELECT COUNT(*) AS count FROM suggestions WHERE status = 'new'").get().count,
-      favorites: this.db.prepare("SELECT COUNT(*) AS count FROM favorites").get().count
+      favorites: this.db.prepare("SELECT COUNT(*) AS count FROM favorites").get().count,
+      leads: this.db.prepare("SELECT COUNT(*) AS count FROM leads").get().count,
+      pendingLeads: this.db.prepare("SELECT COUNT(*) AS count FROM leads WHERE status = 'new'").get().count
     };
   }
 
@@ -136,7 +167,8 @@ export class HubStore {
       newToday: this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE created_at >= date('now')").get().count,
       new7: this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE created_at >= datetime('now', '-7 days')").get().count,
       opens7: this.db.prepare("SELECT COUNT(*) AS count FROM opens WHERE created_at >= datetime('now', '-7 days')").get().count,
-      suggestions7: this.db.prepare("SELECT COUNT(*) AS count FROM suggestions WHERE created_at >= datetime('now', '-7 days')").get().count
+      suggestions7: this.db.prepare("SELECT COUNT(*) AS count FROM suggestions WHERE created_at >= datetime('now', '-7 days')").get().count,
+      leads7: this.db.prepare("SELECT COUNT(*) AS count FROM leads WHERE created_at >= datetime('now', '-7 days')").get().count
     };
   }
 }

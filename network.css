@@ -188,6 +188,20 @@ h3 { margin-bottom: 12px; font-size: 24px; }
 .accent-budget { --accent: var(--blue); }
 .accent-tasks { --accent: #7d4bb3; }
 
+.service-band {
+  padding: 64px max(16px, calc((100% - 1160px) / 2));
+  background: #e7efec;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 40px;
+}
+
+.service-band > div { max-width: 760px; }
+.service-band > div > p:not(.network-eyebrow) { margin: 0; color: var(--muted); font-size: 18px; line-height: 1.6; }
+.service-band .network-eyebrow { color: var(--green); }
+.service-band .network-primary { flex: 0 0 auto; }
+
 .trust-band {
   padding: 64px max(16px, calc((100% - 1160px) / 2));
   background: var(--dark);
@@ -228,6 +242,7 @@ h3 { margin-bottom: 12px; font-size: 24px; }
   .bot-grid { grid-template-columns: 1fr; }
   .bot-card { grid-column: auto; min-height: 300px; }
   .trust-band { grid-template-columns: 1fr; gap: 18px; }
+  .service-band { align-items: flex-start; flex-direction: column; gap: 24px; }
 }
 
 @media (max-width: 480px) {

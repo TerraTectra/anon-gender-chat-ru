@@ -15,8 +15,27 @@ function homeKeyboard() {
     .row()
     .text("🔎 Найти по задаче", "hub:search")
     .row()
+    .text("🛠 Заказать бота для бизнеса", "hub:lead:start")
+    .row()
     .text("💡 Предложить нового бота", "hub:suggest");
 }
+
+const leadBudgetKeyboard = new InlineKeyboard()
+  .text("До 30 000 ₽", "hub:lead:budget:30")
+  .text("30–70 000 ₽", "hub:lead:budget:70")
+  .row()
+  .text("70–150 000 ₽", "hub:lead:budget:150")
+  .text("Обсудить", "hub:lead:budget:talk")
+  .row()
+  .text("Отмена", "hub:home");
+
+const leadDeadlineKeyboard = new InlineKeyboard()
+  .text("1–2 недели", "hub:lead:deadline:fast")
+  .text("До месяца", "hub:lead:deadline:month")
+  .row()
+  .text("Срок гибкий", "hub:lead:deadline:flexible")
+  .row()
+  .text("Отмена", "hub:home");
 
 function productKeyboard(items) {
   const keyboard = new InlineKeyboard();
@@ -40,7 +59,18 @@ function categoryText(category) {
 export function createHubBot(token, dbPath) {
   const store = new HubStore(dbPath);
   const bot = new Bot(token);
-  bot.use(session({ initial: () => ({ waitingSuggestion: false, waitingSearch: false }) }));
+  bot.use(session({ initial: () => ({ waitingSuggestion: false, waitingSearch: false, leadStep: null, leadDraft: null, startSource: null }) }));
+
+  async function startLead(ctx, edit = false) {
+    ctx.session.waitingSuggestion = false;
+    ctx.session.waitingSearch = false;
+    ctx.session.leadStep = "request";
+    ctx.session.leadDraft = {};
+    const text = "Разработаем Telegram-бота или автоматизацию под вашу задачу.\n\nКоротко опишите бизнес, процесс и желаемый результат.";
+    const options = { reply_markup: new InlineKeyboard().text("Отмена", "hub:home") };
+    if (edit) return ctx.editMessageText(text, options);
+    return ctx.reply(text, options);
+  }
 
   function productCardKeyboard(userId, product) {
     const favorite = store.isFavorite(userId, product.id);
@@ -61,10 +91,13 @@ export function createHubBot(token, dbPath) {
   }
 
   bot.command("start", async (ctx) => {
-    store.upsertUser(ctx.from.id, ctx.from.username, parseStartSource(ctx.match, ctx.from.id));
+    const source = parseStartSource(ctx.match, ctx.from.id);
+    store.upsertUser(ctx.from.id, ctx.from.username, source);
+    ctx.session.startSource = source;
     ctx.session.waitingSuggestion = false;
     ctx.session.waitingSearch = false;
-    await showHome(ctx);
+    if (source?.includes("lead")) await startLead(ctx);
+    else await showHome(ctx);
   });
   bot.command("catalog", (ctx) => showHome(ctx));
   bot.command("favorites", async (ctx) => {
@@ -78,6 +111,8 @@ export function createHubBot(token, dbPath) {
     await ctx.answerCallbackQuery();
     ctx.session.waitingSuggestion = false;
     ctx.session.waitingSearch = false;
+    ctx.session.leadStep = null;
+    ctx.session.leadDraft = null;
     await showHome(ctx, true);
   });
 
@@ -135,6 +170,39 @@ export function createHubBot(token, dbPath) {
     });
   });
 
+  bot.callbackQuery("hub:lead:start", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await startLead(ctx, true);
+  });
+
+  bot.callbackQuery(/^hub:lead:budget:(30|70|150|talk)$/, async (ctx) => {
+    if (ctx.session.leadStep !== "budget" || !ctx.session.leadDraft?.request) return ctx.answerCallbackQuery("Заявка уже закрыта");
+    const budgets = { "30": "до 30 000 ₽", "70": "30–70 000 ₽", "150": "70–150 000 ₽", talk: "обсудить" };
+    ctx.session.leadDraft.budget = budgets[ctx.match[1]];
+    ctx.session.leadStep = "deadline";
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText("Какой срок запуска комфортен?", { reply_markup: leadDeadlineKeyboard });
+  });
+
+  bot.callbackQuery(/^hub:lead:deadline:(fast|month|flexible)$/, async (ctx) => {
+    if (ctx.session.leadStep !== "deadline" || !ctx.session.leadDraft?.budget) return ctx.answerCallbackQuery("Заявка уже закрыта");
+    const deadlines = { fast: "1–2 недели", month: "до месяца", flexible: "гибкий" };
+    const lead = store.addLead(
+      ctx.from.id,
+      ctx.from.username,
+      ctx.session.leadDraft.request,
+      ctx.session.leadDraft.budget,
+      deadlines[ctx.match[1]],
+      ctx.session.startSource
+    );
+    ctx.session.leadStep = null;
+    ctx.session.leadDraft = null;
+    await ctx.answerCallbackQuery("Заявка отправлена");
+    await ctx.editMessageText(`Заявка #${lead.id} принята.\n\nМы изучим задачу и свяжемся с вами в Telegram.`, {
+      reply_markup: new InlineKeyboard().text("← В главное меню", "hub:home")
+    });
+  });
+
   bot.callbackQuery(/^hub:product:(\w+)$/, async (ctx) => {
     const product = products.find((item) => item.id === ctx.match[1]);
     if (!product) return ctx.answerCallbackQuery("Бот не найден");
@@ -165,6 +233,13 @@ export function createHubBot(token, dbPath) {
   });
 
   bot.on("message:text", async (ctx) => {
+    if (ctx.session.leadStep === "request") {
+      const request = ctx.message.text.trim().replace(/\s+/g, " ");
+      if (request.length < 20 || request.length > 1000) return ctx.reply("Опишите задачу текстом от 20 до 1000 символов.");
+      ctx.session.leadDraft = { request };
+      ctx.session.leadStep = "budget";
+      return ctx.reply("Какой ориентир по бюджету?", { reply_markup: leadBudgetKeyboard });
+    }
     if (ctx.session.waitingSearch) {
       const query = ctx.message.text.trim().replace(/\s+/g, " ");
       if (query.length < 3 || query.length > 200) return ctx.reply("Опишите задачу текстом от 3 до 200 символов.");
