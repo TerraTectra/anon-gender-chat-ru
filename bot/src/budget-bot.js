@@ -10,6 +10,7 @@ const labels = {
   month: "📊 Месяц",
   undo: "↩ Отменить запись",
   export: "📤 Экспорт",
+  limit: "🎯 Лимит месяца",
   invite: "🎁 Пригласить",
   catalog: catalogLabel
 };
@@ -23,6 +24,8 @@ const menu = new Keyboard()
   .row()
   .text(labels.undo)
   .text(labels.export)
+  .row()
+  .text(labels.limit)
   .row()
   .text(labels.invite)
   .row()
@@ -75,6 +78,14 @@ function parseEntry(text) {
   return { amountCents, note: match[2].trim().replace(/\s+/g, " ") };
 }
 
+function parseLimit(text) {
+  const match = text.trim().match(/^(\d+(?:[.,]\d{1,2})?)$/);
+  if (!match) return null;
+  const amountCents = Math.round(Number(match[1].replace(",", ".")) * 100);
+  if (!Number.isSafeInteger(amountCents) || amountCents < 10_000 || amountCents > 100_000_000_00) return null;
+  return amountCents;
+}
+
 function csvEscape(value) {
   const string = String(value ?? "");
   return `"${string.replaceAll('"', '""')}"`;
@@ -83,7 +94,7 @@ function csvEscape(value) {
 export function createBudgetBot(token, dbPath) {
   const store = new BudgetStore(dbPath);
   const bot = new Bot(token);
-  bot.use(session({ initial: () => ({ entryType: null, pendingEntry: null }) }));
+  bot.use(session({ initial: () => ({ entryType: null, pendingEntry: null, waitingLimit: false }) }));
 
   bot.use(async (ctx, next) => {
     if (ctx.from && store.isBanned(ctx.from.id)) {
@@ -102,6 +113,7 @@ export function createBudgetBot(token, dbPath) {
     store.upsertUser(ctx.from.id, ctx.from.username);
     ctx.session.entryType = type;
     ctx.session.pendingEntry = null;
+    ctx.session.waitingLimit = false;
     const example = type === "expense" ? "350 кофе" : "5000 заказ";
     await ctx.reply(`Введите сумму и комментарий, например: ${example}`);
   }
@@ -113,7 +125,34 @@ export function createBudgetBot(token, dbPath) {
     const categoryLines = summary.categories.slice(0, 5)
       .map((row) => `${categoryNames[row.category] ?? row.category}: ${formatMoney(row.amount)}`);
     const details = categoryLines.length ? `\n\nРасходы по категориям:\n${categoryLines.join("\n")}` : "";
-    await ctx.reply(`${title}\nДоходы: ${formatMoney(summary.income)}\nРасходы: ${formatMoney(summary.expense)}\nБаланс: ${formatMoney(summary.income - summary.expense)}\nЗаписей: ${summary.entries}${details}`, { reply_markup: menu });
+    const limit = period === "month" ? store.monthlyLimit(ctx.from.id) : null;
+    const limitText = limit
+      ? `\nЛимит: ${formatMoney(limit)}\nОсталось: ${formatMoney(Math.max(0, limit - summary.expense))}`
+      : "";
+    await ctx.reply(`${title}\nДоходы: ${formatMoney(summary.income)}\nРасходы: ${formatMoney(summary.expense)}\nБаланс: ${formatMoney(summary.income - summary.expense)}\nЗаписей: ${summary.entries}${limitText}${details}`, { reply_markup: menu });
+  }
+
+  async function beginLimit(ctx, raw = "") {
+    store.upsertUser(ctx.from.id, ctx.from.username);
+    if (/^(?:0|off|нет|отключить)$/i.test(raw.trim())) {
+      store.clearMonthlyLimit(ctx.from.id);
+      ctx.session.waitingLimit = false;
+      await ctx.reply("Месячный лимит отключён.", { reply_markup: menu });
+      return;
+    }
+    const parsed = parseLimit(raw);
+    if (parsed) {
+      store.setMonthlyLimit(ctx.from.id, parsed);
+      ctx.session.waitingLimit = false;
+      await ctx.reply(`Месячный лимит установлен: ${formatMoney(parsed)}.`, { reply_markup: menu });
+      return;
+    }
+    ctx.session.entryType = null;
+    ctx.session.pendingEntry = null;
+    ctx.session.waitingLimit = true;
+    const current = store.monthlyLimit(ctx.from.id);
+    const currentText = current ? ` Сейчас установлен ${formatMoney(current)}.` : "";
+    await ctx.reply(`Введите месячный лимит расходов одним числом, например: 50000.${currentText}\nЧтобы отключить лимит, отправьте 0.`);
   }
 
   async function undoEntry(ctx) {
@@ -179,6 +218,7 @@ export function createBudgetBot(token, dbPath) {
   bot.command("month", (ctx) => showSummary(ctx, "month"));
   bot.command("undo", undoEntry);
   bot.command("export", exportEntries);
+  bot.command("limit", (ctx) => beginLimit(ctx, ctx.match ?? ""));
   bot.command("invite", showInvite);
   bot.command("privacy", (ctx) => ctx.reply("Записи хранятся локально в базе бота и не отправляются банкам, рекламным системам или сторонним сервисам. Не вводите номера карт, пароли и другие секреты.", { reply_markup: menu }));
   bot.command("catalog", showCatalog);
@@ -189,6 +229,7 @@ export function createBudgetBot(token, dbPath) {
   bot.hears(labels.month, (ctx) => showSummary(ctx, "month"));
   bot.hears(labels.undo, undoEntry);
   bot.hears(labels.export, exportEntries);
+  bot.hears(labels.limit, beginLimit);
   bot.hears(labels.invite, showInvite);
   bot.hears(labels.catalog, showCatalog);
 
@@ -205,10 +246,34 @@ export function createBudgetBot(token, dbPath) {
     ctx.session.entryType = null;
     await ctx.answerCallbackQuery("Сохранено");
     await ctx.editMessageText(`${entry.type === "expense" ? "Расход" : "Доход"}: ${formatMoney(entry.amount_cents)}\n${categoryNames[entry.category] ?? entry.category}: ${entry.note}`);
-    await ctx.reply("Запись сохранена.", { reply_markup: menu });
+    let notice = "Запись сохранена.";
+    if (entry.type === "expense") {
+      const limit = store.monthlyLimit(ctx.from.id);
+      if (limit) {
+        const spent = store.summary(ctx.from.id, "month").expense;
+        const percent = Math.round((spent / limit) * 100);
+        if (spent >= limit) notice += `\n\nЛимит месяца исчерпан: ${formatMoney(spent)} из ${formatMoney(limit)}.`;
+        else if (percent >= 80) notice += `\n\nИспользовано ${percent}% месячного лимита.`;
+      }
+    }
+    await ctx.reply(notice, { reply_markup: menu });
   });
 
   bot.on("message:text", async (ctx) => {
+    if (ctx.session.waitingLimit) {
+      if (/^(?:0|off|нет|отключить)$/i.test(ctx.message.text.trim())) {
+        store.clearMonthlyLimit(ctx.from.id);
+        ctx.session.waitingLimit = false;
+        await ctx.reply("Месячный лимит отключён.", { reply_markup: menu });
+        return;
+      }
+      const limit = parseLimit(ctx.message.text);
+      if (!limit) return ctx.reply("Введите сумму от 100 до 100 000 000 ₽ одним числом.");
+      store.setMonthlyLimit(ctx.from.id, limit);
+      ctx.session.waitingLimit = false;
+      await ctx.reply(`Месячный лимит установлен: ${formatMoney(limit)}.`, { reply_markup: menu });
+      return;
+    }
     if (!ctx.session.entryType) {
       await showMenu(ctx);
       return;
@@ -227,4 +292,4 @@ export function createBudgetBot(token, dbPath) {
   return bot;
 }
 
-export { formatMoney, parseEntry };
+export { formatMoney, parseEntry, parseLimit };
