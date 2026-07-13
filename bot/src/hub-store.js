@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS opens (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
   product_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'catalog',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -60,6 +61,10 @@ export class HubStore {
     if (!suggestionColumns.some((column) => column.name === "status")) {
       this.db.exec("ALTER TABLE suggestions ADD COLUMN status TEXT NOT NULL DEFAULT 'new'");
     }
+    const openColumns = this.db.prepare("PRAGMA table_info(opens)").all();
+    if (!openColumns.some((column) => column.name === "source")) {
+      this.db.exec("ALTER TABLE opens ADD COLUMN source TEXT NOT NULL DEFAULT 'catalog'");
+    }
   }
 
   close() {
@@ -76,8 +81,8 @@ export class HubStore {
     `).run(id, username ?? null, source);
   }
 
-  recordOpen(userId, productId) {
-    this.db.prepare("INSERT INTO opens (user_id, product_id) VALUES (?, ?)").run(userId, productId);
+  recordOpen(userId, productId, source = "catalog") {
+    this.db.prepare("INSERT INTO opens (user_id, product_id, source) VALUES (?, ?, ?)").run(userId, productId, source);
   }
 
   addSuggestion(userId, text) {
@@ -105,6 +110,14 @@ export class HubStore {
       SELECT product_id, COUNT(*) AS opens
       FROM opens WHERE created_at >= datetime('now', ?)
       GROUP BY product_id ORDER BY opens DESC, product_id LIMIT ?
+    `).all(`-${days} days`, limit);
+  }
+
+  openSourceStats(limit = 10, days = 30) {
+    return this.db.prepare(`
+      SELECT source, COUNT(*) AS opens, COUNT(DISTINCT user_id) AS users
+      FROM opens WHERE created_at >= datetime('now', ?)
+      GROUP BY source ORDER BY opens DESC, source LIMIT ?
     `).all(`-${days} days`, limit);
   }
 
