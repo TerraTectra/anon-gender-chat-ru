@@ -31,6 +31,7 @@ test("hub stores users, product opens and suggestions", () => {
     { source: "recommend", opens: 1, users: 1 },
     { source: "search", opens: 1, users: 1 }
   ]);
+  assert.deepEqual(store.recentProductIds(10), ["tasks", "focus"]);
   const [idea] = store.recentSuggestions();
   assert.equal(idea.text, "Бот для планирования питания");
   assert.equal(store.reviewSuggestion(idea.id, "planned"), true);
