@@ -7,6 +7,7 @@ import { FocusStore } from "./focus-store.js";
 import { GameStore } from "./game-store.js";
 import { LanguageStore } from "./language-store.js";
 import { HubStore } from "./hub-store.js";
+import { products as catalogProducts } from "./products.js";
 import { TaskStore } from "./task-store.js";
 import { Store } from "./store.js";
 
@@ -290,6 +291,16 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     return `Кампании по всему семейству\n\n${lines.length ? lines.join("\n") : "Данных пока нет"}`;
   }
 
+  function hubFunnelText() {
+    if (!hubStore) return "Хаб не подключён.";
+    const funnel = hubStore.funnelStats(30);
+    const percent = (value, total) => total ? Math.round(value * 100 / total) : 0;
+    const productNames = new Map(catalogProducts.map((product) => [product.id, product.name]));
+    const productLines = hubStore.productPerformance(30).slice(0, 6).map((row, index) =>
+      `${index + 1}. ${productNames.get(row.product_id) || row.product_id}: ${row.opens} переходов · ${row.users} чел. · ${row.favorites} в избранном`);
+    return `Воронка TerraTectra Hub · 30 дней\n\nПользователи: ${funnel.users}\nОткрыли хотя бы один бот: ${funnel.engaged} (${percent(funnel.engaged, funnel.users)}%)\nДобавили в избранное: ${funnel.favorited} (${percent(funnel.favorited, funnel.engaged)}% от открывших)\nОставили заявку: ${funnel.leads} (${percent(funnel.leads, funnel.users)}%)\nВсего переходов: ${funnel.opens}\n\nИнтерес к продуктам\n${productLines.length ? productLines.join("\n") : "Данных пока нет"}`;
+  }
+
   bot.use(async (ctx, next) => {
     if (!ctx.from) return;
     if (ctx.message?.text === "/id") {
@@ -323,6 +334,8 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   bot.hears("🧭 Источники", (ctx) => ctx.reply(allSourcesText(), { reply_markup: adminKeyboard }));
   bot.command("campaigns", (ctx) => ctx.reply(campaignStatsText(), { reply_markup: adminKeyboard }));
   bot.hears("📣 Кампании", (ctx) => ctx.reply(campaignStatsText(), { reply_markup: adminKeyboard }));
+  bot.command("funnel", (ctx) => ctx.reply(hubFunnelText(), { reply_markup: adminKeyboard }));
+  bot.hears("📊 Воронка", (ctx) => ctx.reply(hubFunnelText(), { reply_markup: adminKeyboard }));
 
   async function sendIdeas(ctx) {
     if (!hubStore) return ctx.reply("Хаб не подключён.", { reply_markup: adminKeyboard });

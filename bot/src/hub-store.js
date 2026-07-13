@@ -121,6 +121,40 @@ export class HubStore {
     `).all(`-${days} days`, limit);
   }
 
+  funnelStats(days = 30) {
+    const since = `-${days} days`;
+    return {
+      users: this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE created_at >= datetime('now', ?)").get(since).count,
+      engaged: this.db.prepare("SELECT COUNT(DISTINCT user_id) AS count FROM opens WHERE created_at >= datetime('now', ?)").get(since).count,
+      favorited: this.db.prepare("SELECT COUNT(DISTINCT user_id) AS count FROM favorites WHERE created_at >= datetime('now', ?)").get(since).count,
+      leads: this.db.prepare("SELECT COUNT(DISTINCT user_id) AS count FROM leads WHERE created_at >= datetime('now', ?)").get(since).count,
+      opens: this.db.prepare("SELECT COUNT(*) AS count FROM opens WHERE created_at >= datetime('now', ?)").get(since).count
+    };
+  }
+
+  productPerformance(days = 30) {
+    const since = `-${days} days`;
+    const rows = new Map();
+    for (const row of this.db.prepare(`
+      SELECT product_id, COUNT(*) AS opens, COUNT(DISTINCT user_id) AS users
+      FROM opens WHERE created_at >= datetime('now', ?)
+      GROUP BY product_id
+    `).all(since)) {
+      rows.set(row.product_id, { product_id: row.product_id, opens: row.opens, users: row.users, favorites: 0 });
+    }
+    for (const row of this.db.prepare(`
+      SELECT product_id, COUNT(*) AS favorites
+      FROM favorites WHERE created_at >= datetime('now', ?)
+      GROUP BY product_id
+    `).all(since)) {
+      const current = rows.get(row.product_id) || { product_id: row.product_id, opens: 0, users: 0, favorites: 0 };
+      current.favorites = row.favorites;
+      rows.set(row.product_id, current);
+    }
+    return [...rows.values()].sort((left, right) =>
+      right.users - left.users || right.opens - left.opens || right.favorites - left.favorites || left.product_id.localeCompare(right.product_id));
+  }
+
   recentProductIds(userId, limit = 5) {
     return this.db.prepare(`
       SELECT product_id, MAX(id) AS last_open
