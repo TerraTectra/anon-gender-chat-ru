@@ -4,8 +4,8 @@
 
 | Площадка | Адрес | Что размещаем | Метка источника | Состояние |
 | --- | --- | --- | --- | --- |
-| Каталог Телеграм | https://katalogtelegram.ru/dobavit | TerraTectra Bots | `src_catalog_katalogtelegram` | форма проверена, требуется отправка |
-| Tgram | https://tgram.ru/bots/ | TerraTectra Bots | `src_catalog_tgram` | доступно бесплатное добавление по username |
+| Каталог Телеграм | https://katalogtelegram.ru/dobavit | TerraTectra Bots | `src_catalog_katalogtelegram` | заявка отправлена 13.07.2026, модерация до 72 часов |
+| Tgram | https://tgram.ru/bots/ | TerraTectra Bots | `src_catalog_tgram` | заявка отправлена 13.07.2026 через @addtbazabot |
 | AllTelegram | https://alltelegram.com/ru | TerraTectra Bots | `src_catalog_alltelegram` | заявка через контакты |
 
 ## Карточка хаба
