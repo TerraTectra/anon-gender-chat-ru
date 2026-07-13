@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS bans (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  monthly_limit_cents INTEGER CHECK (monthly_limit_cents > 0),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_budget_user_date ON entries(user_id, created_at);
 `;
 
@@ -86,6 +92,21 @@ export class BudgetStore {
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(userId, type, amountCents, category, note, createdAt);
     return this.db.prepare("SELECT * FROM entries WHERE id = ?").get(result.lastInsertRowid);
+  }
+
+  setMonthlyLimit(userId, amountCents) {
+    this.db.prepare(`
+      INSERT INTO settings (user_id, monthly_limit_cents) VALUES (?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET monthly_limit_cents = excluded.monthly_limit_cents, updated_at = CURRENT_TIMESTAMP
+    `).run(userId, amountCents);
+  }
+
+  monthlyLimit(userId) {
+    return this.db.prepare("SELECT monthly_limit_cents FROM settings WHERE user_id = ?").get(userId)?.monthly_limit_cents ?? null;
+  }
+
+  clearMonthlyLimit(userId) {
+    return this.db.prepare("DELETE FROM settings WHERE user_id = ?").run(userId).changes === 1;
   }
 
   undoLast(userId) {

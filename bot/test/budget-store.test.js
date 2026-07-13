@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { BudgetStore } from "../src/budget-store.js";
-import { formatMoney, parseEntry } from "../src/budget-bot.js";
+import { formatMoney, parseEntry, parseLimit } from "../src/budget-bot.js";
 
 function withStore(callback) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "budget-bot-"));
@@ -21,6 +21,21 @@ test("budget input accepts decimal commas and a note", () => {
   assert.deepEqual(parseEntry("350,50 кофе"), { amountCents: 35050, note: "кофе" });
   assert.equal(parseEntry("кофе 350"), null);
   assert.equal(formatMoney(35050).includes("350,5"), true);
+  assert.equal(parseLimit("50000"), 5_000_000);
+  assert.equal(parseLimit("99"), null);
+});
+
+test("monthly spending limit is stored per user", () => {
+  withStore((store) => {
+    store.upsertUser(1, "first");
+    assert.equal(store.monthlyLimit(1), null);
+    store.setMonthlyLimit(1, 5_000_000);
+    assert.equal(store.monthlyLimit(1), 5_000_000);
+    store.setMonthlyLimit(1, 6_000_000);
+    assert.equal(store.monthlyLimit(1), 6_000_000);
+    assert.equal(store.clearMonthlyLimit(1), true);
+    assert.equal(store.monthlyLimit(1), null);
+  });
 });
 
 test("daily summary separates income and expenses", () => {
