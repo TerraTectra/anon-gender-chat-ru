@@ -29,6 +29,9 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   const admins = parseAdmins(adminIds);
   const bot = new Bot(token);
   const healthPath = path.resolve(options.healthPath || "./data/health.json");
+  const reportStatePath = path.resolve(options.reportStatePath || "./data/admin-report-state.json");
+  const reportHour = Number.isInteger(options.reportHour) ? options.reportHour : 10;
+  let reportTimer = null;
 
   const productKeyboard = new InlineKeyboard()
     .text("Анонимный чат", "admin_product:anon")
@@ -97,6 +100,94 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       return "Состояние системы недоступно: файл health.json ещё не создан.";
     }
   }
+
+  function moscowTimeParts(date = new Date()) {
+    const values = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Moscow",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(date).map((part) => [part.type, part.value]));
+    return {
+      date: `${values.year}-${values.month}-${values.day}`,
+      hour: Number(values.hour),
+      minute: Number(values.minute)
+    };
+  }
+
+  function dailyReportText() {
+    const products = [
+      ["Анонимный чат", store],
+      ["English Talk Match", englishStore],
+      ["Focus Sprint", focusStore],
+      ["Game Mate", gameStore],
+      ["Карманный бюджет", budgetStore],
+      ["TerraTectra Hub", hubStore],
+      ["Task Pulse", taskStore]
+    ].filter(([, productStore]) => productStore);
+    const growth = products.map(([name, productStore]) => [name, productStore.growthStats()]);
+    const newToday = growth.reduce((sum, [, item]) => sum + (item.newToday || 0), 0);
+    const new7 = growth.reduce((sum, [, item]) => sum + (item.new7 || 0), 0);
+    const referrals = growth.reduce((sum, [, item]) => sum + (item.referred || 0), 0);
+    const actions7 = growth.reduce((sum, [, item]) => sum
+      + (item.matches7 || 0)
+      + (item.completed7 || 0)
+      + (item.entries7 || 0)
+      + (item.done7 || 0)
+      + (item.opens7 || 0), 0);
+    const productLines = growth
+      .sort((left, right) => (right[1].new7 || 0) - (left[1].new7 || 0))
+      .map(([name, item]) => `${name}: +${item.new7 || 0}`)
+      .join("\n");
+    const sourceLines = products.flatMap(([name, productStore]) => productStore.sourceStats(1)
+      .map((row) => `${name}: ${row.source} (${row.users})`));
+    const hub = hubStore?.stats();
+    const date = moscowTimeParts().date.split("-").reverse().join(".");
+
+    return `Ежедневный отчёт TerraTectra • ${date}\n\nНовых регистраций сегодня: ${newToday}\nРегистраций за 7 дней: ${new7}\nПо приглашениям: ${referrals}\nПолезных действий за 7 дней: ${actions7}\n\nРост по продуктам за 7 дней\n${productLines}\n\nИсточники-лидеры\n${sourceLines.length ? sourceLines.join("\n") : "Данных пока нет"}\n\nТребуют внимания\nЛиды: ${hub?.pendingLeads || 0}\nИдеи: ${hub?.pendingSuggestions || 0}`;
+  }
+
+  function readLastReportDate() {
+    try {
+      return JSON.parse(fs.readFileSync(reportStatePath, "utf8")).lastDate || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveLastReportDate(date) {
+    fs.mkdirSync(path.dirname(reportStatePath), { recursive: true });
+    const temporary = `${reportStatePath}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify({ lastDate: date }, null, 2));
+    fs.renameSync(temporary, reportStatePath);
+  }
+
+  async function sendDailyReport() {
+    const message = dailyReportText();
+    await Promise.all([...admins].map((adminId) => bot.api.sendMessage(adminId, message, { reply_markup: adminKeyboard })));
+  }
+
+  bot.startDailyReportScheduler = () => {
+    if (reportTimer) return;
+    reportTimer = setInterval(async () => {
+      const now = moscowTimeParts();
+      if (now.hour !== reportHour || now.minute !== 0 || readLastReportDate() === now.date) return;
+      try {
+        await sendDailyReport();
+        saveLastReportDate(now.date);
+      } catch (error) {
+        console.error("Daily admin report error", error);
+      }
+    }, 30_000);
+  };
+
+  bot.stopDailyReportScheduler = () => {
+    if (reportTimer) clearInterval(reportTimer);
+    reportTimer = null;
+  };
 
   function allStatsText() {
     const parts = [`Анонимный чат\n${statsText(store.stats())}`];
@@ -190,6 +281,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   });
   bot.command("health", (ctx) => ctx.reply(healthText(), { reply_markup: adminKeyboard }));
   bot.hears("💚 Состояние", (ctx) => ctx.reply(healthText(), { reply_markup: adminKeyboard }));
+  bot.command("daily", (ctx) => ctx.reply(dailyReportText(), { reply_markup: adminKeyboard }));
   bot.command("stats", (ctx) => ctx.reply(allStatsText(), { reply_markup: adminKeyboard }));
   bot.hears("📊 Статистика", (ctx) => ctx.reply(allStatsText(), { reply_markup: adminKeyboard }));
   bot.command("growth", (ctx) => ctx.reply(allGrowthText(), { reply_markup: adminKeyboard }));
