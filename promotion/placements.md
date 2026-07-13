@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- |
 | Каталог Телеграм | https://katalogtelegram.ru/dobavit | TerraTectra Bots | `src_catalog_katalogtelegram` | заявка отправлена 13.07.2026, модерация до 72 часов |
 | Tgram | https://tgram.ru/bots/ | TerraTectra Bots | `src_catalog_tgram` | ожидает модерации; после проверки каталог запросит оплату, не оплачивать без отдельного решения |
-| AllTelegram | https://alltelegram.com/ru/contact | TerraTectra Bots | `src_catalog_alltelegram` | бесплатная контактная форма проверена, заявка подготовлена |
+| AllTelegram | https://alltelegram.com/ru/contact | TerraTectra Bots | `src_catalog_alltelegram` | заявка успешно отправлена 13.07.2026, ожидается ответ модерации |
 
 ## Карточка хаба
 
