@@ -10,12 +10,13 @@ test("hub stores users, product opens and suggestions", () => {
   const store = new HubStore(path.join(directory, "hub.db"));
 
   store.upsertUser(10, "tester", "src_launch");
-  store.recordOpen(10, "focus");
+  store.recordOpen(10, "focus", "recommend");
+  store.recordOpen(10, "tasks", "search");
   store.addSuggestion(10, "Бот для планирования питания");
 
   assert.deepEqual(store.stats(), {
     users: 1,
-    opens: 1,
+    opens: 2,
     suggestions: 1,
     pendingSuggestions: 1,
     favorites: 0,
@@ -26,6 +27,10 @@ test("hub stores users, product opens and suggestions", () => {
   assert.equal(source.source, "src_launch");
   assert.equal(source.users, 1);
   assert.equal(store.popularProducts()[0].product_id, "focus");
+  assert.deepEqual(store.openSourceStats().map((row) => ({ ...row })), [
+    { source: "recommend", opens: 1, users: 1 },
+    { source: "search", opens: 1, users: 1 }
+  ]);
   const [idea] = store.recentSuggestions();
   assert.equal(idea.text, "Бот для планирования питания");
   assert.equal(store.reviewSuggestion(idea.id, "planned"), true);

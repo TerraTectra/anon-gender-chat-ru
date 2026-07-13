@@ -103,7 +103,8 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     if (product === "hub" && hubStore) {
       const current = hubStore.stats();
       const growth = hubStore.growthStats();
-      return `TerraTectra Bots\n\nПользователей: ${current.users}\nПереходов к ботам: ${current.opens}\nИзбранных: ${current.favorites}\nЛидов: ${current.leads}\nНовых лидов: ${current.pendingLeads}\nПредложений: ${current.suggestions}\nНовых идей: ${current.pendingSuggestions}\n\nЗа 7 дней\nНовые: ${growth.new7}\nПереходы к ботам: ${growth.opens7}\nЛиды: ${growth.leads7}\nПредложения: ${growth.suggestions7}`;
+      const discovery = hubStore.openSourceStats(5).map((row) => `${row.source}: ${row.opens} (${row.users} чел.)`).join("\n");
+      return `TerraTectra Bots\n\nПользователей: ${current.users}\nПереходов к ботам: ${current.opens}\nИзбранных: ${current.favorites}\nЛидов: ${current.leads}\nНовых лидов: ${current.pendingLeads}\nПредложений: ${current.suggestions}\nНовых идей: ${current.pendingSuggestions}\n\nЗа 7 дней\nНовые: ${growth.new7}\nПереходы к ботам: ${growth.opens7}\nЛиды: ${growth.leads7}\nПредложения: ${growth.suggestions7}\n\nОткуда открывают ботов\n${discovery || "данных пока нет"}`;
     }
     return "Этот продукт пока не подключён к админ-хабу.";
   }
