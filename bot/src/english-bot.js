@@ -2,6 +2,7 @@ import { Bot, InlineKeyboard, Keyboard, session } from "grammy";
 import { LanguageStore } from "./language-store.js";
 import { catalogLabel, showCatalog } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
+import { inviteKeyboard } from "./referrals.js";
 
 const labels = {
   search: "🗣 Find a partner",
@@ -120,7 +121,7 @@ export function createEnglishBot(token, dbPath) {
 
   async function showInvite(ctx) {
     const link = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
-    await ctx.reply(`Your invite link:\n${link}\n\nFriends invited: ${store.invitedCount(ctx.from.id)}. More learners means faster matching.`, { reply_markup: menu });
+    await ctx.reply(`Your invite link:\n${link}\n\nFriends invited: ${store.invitedCount(ctx.from.id)}. More learners means faster matching.`, { reply_markup: inviteKeyboard(link, "Find a speaking partner for English practice") });
   }
 
   async function beginReport(ctx) {

@@ -2,6 +2,7 @@ import { Bot, InlineKeyboard, Keyboard, session } from "grammy";
 import { catalogLabel, showCatalog } from "./catalog.js";
 import { TaskStore } from "./task-store.js";
 import { parseStartSource } from "./tracking.js";
+import { inviteKeyboard } from "./referrals.js";
 
 const labels = {
   add: "➕ Новая задача",
@@ -138,10 +139,11 @@ export function createTaskBot(token, dbPath) {
     const stats = store.userStats(ctx.from.id);
     await ctx.reply(`Активных задач: ${stats.active}.\nВыполнено: ${stats.done}.`, { reply_markup: menu });
   });
-  bot.command("invite", async (ctx) => {
+  async function showInvite(ctx) {
     const link = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
-    await ctx.reply(`Ваша ссылка:\n${link}\n\nПриглашено: ${store.invitedCount(ctx.from.id)}.`, { reply_markup: menu });
-  });
+    await ctx.reply(`Ваша ссылка:\n${link}\n\nПриглашено: ${store.invitedCount(ctx.from.id)}.`, { reply_markup: inviteKeyboard(link, "Задачи и напоминания прямо в Telegram") });
+  }
+  bot.command("invite", showInvite);
   bot.command("help", (ctx) => ctx.reply("Создайте задачу, выберите время напоминания, а после сигнала отметьте её выполненной или отложите на 10 минут.", { reply_markup: menu }));
   bot.command("catalog", showCatalog);
 
@@ -151,10 +153,7 @@ export function createTaskBot(token, dbPath) {
     const stats = store.userStats(ctx.from.id);
     await ctx.reply(`Активных задач: ${stats.active}.\nВыполнено: ${stats.done}.`, { reply_markup: menu });
   });
-  bot.hears(labels.invite, async (ctx) => {
-    const link = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
-    await ctx.reply(`Ваша ссылка:\n${link}\n\nПриглашено: ${store.invitedCount(ctx.from.id)}.`, { reply_markup: menu });
-  });
+  bot.hears(labels.invite, showInvite);
   bot.hears(labels.catalog, showCatalog);
 
   bot.callbackQuery(/^task:when:(900|3600|10800|tomorrow)$/, async (ctx) => {

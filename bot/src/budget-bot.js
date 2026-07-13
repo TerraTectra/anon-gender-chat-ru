@@ -2,6 +2,7 @@ import { Bot, InlineKeyboard, InputFile, Keyboard, session } from "grammy";
 import { BudgetStore } from "./budget-store.js";
 import { catalogLabel, showCatalog } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
+import { inviteKeyboard } from "./referrals.js";
 
 const labels = {
   expense: "➖ Расход",
@@ -189,7 +190,7 @@ export function createBudgetBot(token, dbPath) {
   async function showInvite(ctx) {
     store.upsertUser(ctx.from.id, ctx.from.username);
     const link = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
-    await ctx.reply(`Ваша ссылка:\n${link}\n\nПриглашено: ${store.invitedCount(ctx.from.id)}.`, { reply_markup: menu });
+    await ctx.reply(`Ваша ссылка:\n${link}\n\nПриглашено: ${store.invitedCount(ctx.from.id)}.`, { reply_markup: inviteKeyboard(link, "Простой учёт доходов и расходов прямо в Telegram") });
   }
 
   bot.command("start", async (ctx) => {

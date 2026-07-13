@@ -2,6 +2,7 @@ import { Bot, InlineKeyboard, Keyboard, session } from "grammy";
 import { GameStore, normalizeGame } from "./game-store.js";
 import { catalogLabel, showCatalog } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
+import { inviteKeyboard } from "./referrals.js";
 
 const labels = {
   search: "🎮 Найти напарника",
@@ -144,7 +145,7 @@ export function createGameBot(token, dbPath) {
 
   async function showInvite(ctx) {
     const link = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
-    await ctx.reply(`Ваша ссылка:\n${link}\n\nПриглашено игроков: ${store.invitedCount(ctx.from.id)}.`, { reply_markup: menu });
+    await ctx.reply(`Ваша ссылка:\n${link}\n\nПриглашено игроков: ${store.invitedCount(ctx.from.id)}.`, { reply_markup: inviteKeyboard(link, "Найди тиммейта по игре, платформе и стилю игры") });
   }
 
   async function beginReport(ctx) {

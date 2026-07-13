@@ -2,6 +2,7 @@ import { Bot, Keyboard, session } from "grammy";
 import { FocusStore } from "./focus-store.js";
 import { catalogLabel, showCatalog } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
+import { inviteKeyboard } from "./referrals.js";
 
 const labels = {
   short: "⏱ 25 минут",
@@ -85,7 +86,7 @@ export function createFocusBot(token, dbPath) {
 
   async function showInvite(ctx) {
     const link = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
-    await ctx.reply(`Ваша ссылка:\n${link}\n\nПриглашено: ${store.invitedCount(ctx.from.id)}.`, { reply_markup: menu });
+    await ctx.reply(`Ваша ссылка:\n${link}\n\nПриглашено: ${store.invitedCount(ctx.from.id)}.`, { reply_markup: inviteKeyboard(link, "Фокус-сессии на 25, 50 и 90 минут прямо в Telegram") });
   }
 
   bot.command("start", async (ctx) => {
