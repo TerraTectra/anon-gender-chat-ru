@@ -18,6 +18,23 @@ function statsText(stats) {
   return `Пользователей: ${stats.users}\nИщут: ${stats.searching}\nАктивных чатов: ${stats.chatting}\nНовых жалоб: ${stats.reports}\nЗаблокировано: ${stats.banned}`;
 }
 
+export function aggregateSourceStats(products, limit = 15) {
+  const campaigns = new Map();
+  for (const [product, productStore] of products) {
+    if (!productStore) continue;
+    for (const row of productStore.sourceStats(100)) {
+      const current = campaigns.get(row.source) || { source: row.source, users: 0, products: new Set() };
+      current.users += Number(row.users || 0);
+      current.products.add(product);
+      campaigns.set(row.source, current);
+    }
+  }
+  return [...campaigns.values()]
+    .sort((left, right) => right.users - left.users || left.source.localeCompare(right.source))
+    .slice(0, limit)
+    .map((row) => ({ source: row.source, users: row.users, products: row.products.size }));
+}
+
 export function createAdminBot(token, dbPath, adminIds, options = {}) {
   const store = new Store(dbPath);
   const englishStore = options.englishDbPath ? new LanguageStore(options.englishDbPath) : null;
@@ -257,6 +274,21 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     return `Источники пользователей\n\n${parts.join("\n\n")}`;
   }
 
+  function campaignStatsText() {
+    const products = [
+      ["Анонимный чат", store],
+      ["English Talk Match", englishStore],
+      ["Focus Sprint", focusStore],
+      ["Game Mate", gameStore],
+      ["Карманный бюджет", budgetStore],
+      ["TerraTectra Bots", hubStore],
+      ["Task Pulse", taskStore]
+    ];
+    const rows = aggregateSourceStats(products);
+    const lines = rows.map((row, index) => `${index + 1}. ${row.source}: ${row.users} · продуктов: ${row.products}`);
+    return `Кампании по всему семейству\n\n${lines.length ? lines.join("\n") : "Данных пока нет"}`;
+  }
+
   bot.use(async (ctx, next) => {
     if (!ctx.from) return;
     if (ctx.message?.text === "/id") {
@@ -288,6 +320,8 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   bot.hears("📈 Рост", (ctx) => ctx.reply(allGrowthText(), { reply_markup: adminKeyboard }));
   bot.command("sources", (ctx) => ctx.reply(allSourcesText(), { reply_markup: adminKeyboard }));
   bot.hears("🧭 Источники", (ctx) => ctx.reply(allSourcesText(), { reply_markup: adminKeyboard }));
+  bot.command("campaigns", (ctx) => ctx.reply(campaignStatsText(), { reply_markup: adminKeyboard }));
+  bot.hears("📣 Кампании", (ctx) => ctx.reply(campaignStatsText(), { reply_markup: adminKeyboard }));
 
   async function sendIdeas(ctx) {
     if (!hubStore) return ctx.reply("Хаб не подключён.", { reply_markup: adminKeyboard });
