@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { productLink, products, productsByCategory, recommendationIntents, searchProducts } from "../src/products.js";
+import { channelLink, contentChannels, productLink, products, productsByCategory, recommendationIntents, searchProducts } from "../src/products.js";
 
 test("product catalog has unique bots and tracked links", () => {
   assert.equal(products.length, 6);
@@ -12,6 +12,12 @@ test("product catalog has unique bots and tracked links", () => {
   assert.deepEqual(searchProducts("Мне нужно напомнить о делах").map((product) => product.id), ["tasks"]);
   assert.equal(searchProducts("практика английского")[0].id, "english");
   assert.equal(searchProducts("совсем неизвестная штука").length, 0);
+});
+
+test("content channels have unique public links", () => {
+  assert.equal(contentChannels.length, 3);
+  assert.equal(new Set(contentChannels.map((channel) => channel.username)).size, contentChannels.length);
+  assert.equal(channelLink(contentChannels[0]), "https://t.me/TerraTectraAI");
 });
 
 test("recommendation intents point to existing products", () => {
