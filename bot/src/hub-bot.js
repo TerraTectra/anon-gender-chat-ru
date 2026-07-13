@@ -1,6 +1,6 @@
 import { Bot, InlineKeyboard, session } from "grammy";
 import { HubStore } from "./hub-store.js";
-import { categories, productLink, products, productsByCategory, searchProducts } from "./products.js";
+import { categories, productLink, products, productsByCategory, recommendationIntents, searchProducts } from "./products.js";
 import { parseStartSource } from "./tracking.js";
 
 function homeKeyboard() {
@@ -50,6 +50,12 @@ function productKeyboard(items) {
   return keyboard.text("← В главное меню", "hub:home");
 }
 
+function recommendationKeyboard() {
+  const keyboard = new InlineKeyboard();
+  for (const intent of recommendationIntents) keyboard.text(intent.label, `hub:recommend:${intent.id}`).row();
+  return keyboard.text("← В главное меню", "hub:home");
+}
+
 function categoryText(category) {
   const selected = productsByCategory(category);
   const heading = category === "all"
@@ -74,10 +80,10 @@ export function createHubBot(token, dbPath) {
     return ctx.reply(text, options);
   }
 
-  function productCardKeyboard(userId, product) {
+  function productCardKeyboard(userId, product, source = "src_hub_card") {
     const favorite = store.isFavorite(userId, product.id);
     return new InlineKeyboard()
-      .url("Открыть бота ↗", productLink(product, "src_hub_card"))
+      .url("Открыть бота ↗", productLink(product, source))
       .row()
       .text(favorite ? "★ Убрать из моих" : "☆ Добавить в мои", `hub:favorite:${product.id}`)
       .row()
@@ -135,13 +141,17 @@ export function createHubBot(token, dbPath) {
 
   bot.callbackQuery("hub:recommend", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const selected = products[(ctx.from.id + Date.now()) % products.length];
-    await ctx.editMessageText(`Сегодня попробуйте:\n\n${selected.icon} ${selected.name}\n${selected.tagline}\n\n${selected.description}`, {
-      reply_markup: new InlineKeyboard()
-        .url("Открыть бота ↗", productLink(selected, "src_hub_recommend"))
-        .row()
-        .text("Другой вариант", "hub:recommend")
-        .text("← В меню", "hub:home")
+    await ctx.editMessageText("Что хотите сделать прямо сейчас?", { reply_markup: recommendationKeyboard() });
+  });
+
+  bot.callbackQuery(/^hub:recommend:(\w+)$/, async (ctx) => {
+    const intent = recommendationIntents.find((item) => item.id === ctx.match[1]);
+    const selected = products.find((product) => product.id === intent?.productId);
+    if (!selected) return ctx.answerCallbackQuery("Подходящий бот не найден");
+    store.recordOpen(ctx.from.id, selected.id);
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(`Подойдёт лучше всего:\n\n${selected.icon} ${selected.name}\n${selected.tagline}\n\n${selected.description}`, {
+      reply_markup: productCardKeyboard(ctx.from.id, selected, "src_hub_recommend")
     });
   });
 

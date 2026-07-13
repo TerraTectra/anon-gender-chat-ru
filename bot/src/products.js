@@ -67,6 +67,15 @@ export const categories = [
   { id: "life", label: "🏠 Для жизни" }
 ];
 
+export const recommendationIntents = [
+  { id: "focus", label: "🧠 Сосредоточиться", productId: "focus" },
+  { id: "remember", label: "✅ Не забыть дело", productId: "tasks" },
+  { id: "talk", label: "💬 Найти собеседника", productId: "anon" },
+  { id: "english", label: "🇬🇧 Практиковать английский", productId: "english" },
+  { id: "team", label: "🎮 Найти тиммейта", productId: "game" },
+  { id: "money", label: "💰 Разобраться с деньгами", productId: "budget" }
+];
+
 export function productLink(product, source = "src_family_catalog") {
   return `https://t.me/${product.username}?start=${source}_${product.id}`;
 }

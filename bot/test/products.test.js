@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { productLink, products, productsByCategory, searchProducts } from "../src/products.js";
+import { productLink, products, productsByCategory, recommendationIntents, searchProducts } from "../src/products.js";
 
 test("product catalog has unique bots and tracked links", () => {
   assert.equal(products.length, 6);
@@ -12,4 +12,10 @@ test("product catalog has unique bots and tracked links", () => {
   assert.deepEqual(searchProducts("Мне нужно напомнить о делах").map((product) => product.id), ["tasks"]);
   assert.equal(searchProducts("практика английского")[0].id, "english");
   assert.equal(searchProducts("совсем неизвестная штука").length, 0);
+});
+
+test("recommendation intents point to existing products", () => {
+  const productIds = new Set(products.map((product) => product.id));
+  assert.equal(new Set(recommendationIntents.map((intent) => intent.id)).size, recommendationIntents.length);
+  assert.ok(recommendationIntents.every((intent) => productIds.has(intent.productId)));
 });
