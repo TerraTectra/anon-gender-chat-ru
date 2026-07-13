@@ -13,7 +13,15 @@ test("hub stores users, product opens and suggestions", () => {
   store.recordOpen(10, "focus");
   store.addSuggestion(10, "Бот для планирования питания");
 
-  assert.deepEqual(store.stats(), { users: 1, opens: 1, suggestions: 1, pendingSuggestions: 1, favorites: 0 });
+  assert.deepEqual(store.stats(), {
+    users: 1,
+    opens: 1,
+    suggestions: 1,
+    pendingSuggestions: 1,
+    favorites: 0,
+    leads: 0,
+    pendingLeads: 0
+  });
   const [source] = store.sourceStats();
   assert.equal(source.source, "src_launch");
   assert.equal(source.users, 1);
@@ -28,6 +36,11 @@ test("hub stores users, product opens and suggestions", () => {
   assert.deepEqual(store.favoriteIds(10), ["focus"]);
   assert.equal(store.toggleFavorite(10, "focus"), false);
   assert.equal(store.favoriteIds(10).length, 0);
+  const lead = store.addLead(10, "tester", "Нужен бот для обработки заявок клиентов", "30–70 000 ₽", "до месяца", "src_test_lead");
+  assert.equal(store.recentLeads()[0].id, lead.id);
+  assert.equal(store.stats().pendingLeads, 1);
+  assert.equal(store.reviewLead(lead.id, "contacted"), true);
+  assert.equal(store.reviewLead(lead.id, "won"), false);
 
   store.close();
   fs.rmSync(directory, { recursive: true, force: true });
