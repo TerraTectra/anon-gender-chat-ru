@@ -41,7 +41,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     }
     if (hubStore) {
       const hub = hubStore.stats();
-      parts.push(`TerraTectra Bots\nПользователей: ${hub.users}\nПереходов к ботам: ${hub.opens}\nПредложений: ${hub.suggestions}\nНовых идей: ${hub.pendingSuggestions}`);
+      parts.push(`TerraTectra Bots\nПользователей: ${hub.users}\nПереходов к ботам: ${hub.opens}\nИзбранных ботов: ${hub.favorites}\nПредложений: ${hub.suggestions}\nНовых идей: ${hub.pendingSuggestions}`);
     }
     if (taskStore) {
       const tasks = taskStore.stats();
