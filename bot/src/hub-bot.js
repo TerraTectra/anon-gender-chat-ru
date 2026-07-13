@@ -1,6 +1,6 @@
 import { Bot, InlineKeyboard, session } from "grammy";
 import { HubStore } from "./hub-store.js";
-import { categories, productLink, products, productsByCategory } from "./products.js";
+import { categories, productLink, products, productsByCategory, searchProducts } from "./products.js";
 import { parseStartSource } from "./tracking.js";
 
 function homeKeyboard() {
@@ -11,6 +11,9 @@ function homeKeyboard() {
     .text("📚 Все боты", "hub:category:all")
     .row()
     .text("🔥 Популярное", "hub:popular")
+    .text("⭐ Мои боты", "hub:favorites")
+    .row()
+    .text("🔎 Найти по задаче", "hub:search")
     .row()
     .text("💡 Предложить нового бота", "hub:suggest");
 }
@@ -37,7 +40,18 @@ function categoryText(category) {
 export function createHubBot(token, dbPath) {
   const store = new HubStore(dbPath);
   const bot = new Bot(token);
-  bot.use(session({ initial: () => ({ waitingSuggestion: false }) }));
+  bot.use(session({ initial: () => ({ waitingSuggestion: false, waitingSearch: false }) }));
+
+  function productCardKeyboard(userId, product) {
+    const favorite = store.isFavorite(userId, product.id);
+    return new InlineKeyboard()
+      .url("Открыть бота ↗", productLink(product, "src_hub_card"))
+      .row()
+      .text(favorite ? "★ Убрать из моих" : "☆ Добавить в мои", `hub:favorite:${product.id}`)
+      .row()
+      .text("← К списку", `hub:category:${product.category}`)
+      .text("В меню", "hub:home");
+  }
 
   async function showHome(ctx, edit = false) {
     const text = "TerraTectra Bots\n\nПолезные Telegram-боты в одном месте. Выберите, что пригодится прямо сейчас.";
@@ -49,14 +63,21 @@ export function createHubBot(token, dbPath) {
   bot.command("start", async (ctx) => {
     store.upsertUser(ctx.from.id, ctx.from.username, parseStartSource(ctx.match, ctx.from.id));
     ctx.session.waitingSuggestion = false;
+    ctx.session.waitingSearch = false;
     await showHome(ctx);
   });
   bot.command("catalog", (ctx) => showHome(ctx));
+  bot.command("favorites", async (ctx) => {
+    const items = store.favoriteIds(ctx.from.id).map((id) => products.find((product) => product.id === id)).filter(Boolean);
+    if (!items.length) return ctx.reply("В избранном пока пусто. Откройте карточку бота и нажмите «Добавить в мои».", { reply_markup: homeKeyboard() });
+    return ctx.reply(`Мои боты\n\n${items.map((product) => `${product.icon} ${product.name}\n${product.tagline}`).join("\n\n")}`, { reply_markup: productKeyboard(items) });
+  });
   bot.command("help", (ctx) => ctx.reply("Выберите категорию или попросите подобрать бота. Каталог будет пополняться только проверенными полезными сервисами.", { reply_markup: homeKeyboard() }));
 
   bot.callbackQuery("hub:home", async (ctx) => {
     await ctx.answerCallbackQuery();
     ctx.session.waitingSuggestion = false;
+    ctx.session.waitingSearch = false;
     await showHome(ctx, true);
   });
 
@@ -92,29 +113,70 @@ export function createHubBot(token, dbPath) {
     });
   });
 
+  bot.callbackQuery("hub:favorites", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const items = store.favoriteIds(ctx.from.id).map((id) => products.find((product) => product.id === id)).filter(Boolean);
+    if (!items.length) {
+      return ctx.editMessageText("В избранном пока пусто. Откройте карточку бота и нажмите «Добавить в мои».", {
+        reply_markup: new InlineKeyboard().text("← В главное меню", "hub:home")
+      });
+    }
+    await ctx.editMessageText(`Мои боты\n\n${items.map((product) => `${product.icon} ${product.name}\n${product.tagline}`).join("\n\n")}`, {
+      reply_markup: productKeyboard(items)
+    });
+  });
+
+  bot.callbackQuery("hub:search", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    ctx.session.waitingSearch = true;
+    ctx.session.waitingSuggestion = false;
+    await ctx.editMessageText("Опишите, что вам нужно. Например: «напомнить о деле», «практика английского» или «найти тиммейта».", {
+      reply_markup: new InlineKeyboard().text("Отмена", "hub:home")
+    });
+  });
+
   bot.callbackQuery(/^hub:product:(\w+)$/, async (ctx) => {
     const product = products.find((item) => item.id === ctx.match[1]);
     if (!product) return ctx.answerCallbackQuery("Бот не найден");
     store.recordOpen(ctx.from.id, product.id);
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(`${product.icon} ${product.name}\n\n${product.tagline}\n\n${product.description}`, {
-      reply_markup: new InlineKeyboard()
-        .url("Открыть бота ↗", productLink(product, "src_hub_card"))
-        .row()
-        .text("← К списку", `hub:category:${product.category}`)
-        .text("В меню", "hub:home")
+      reply_markup: productCardKeyboard(ctx.from.id, product)
+    });
+  });
+
+  bot.callbackQuery(/^hub:favorite:(\w+)$/, async (ctx) => {
+    const product = products.find((item) => item.id === ctx.match[1]);
+    if (!product) return ctx.answerCallbackQuery("Бот не найден");
+    const favorite = store.toggleFavorite(ctx.from.id, product.id);
+    await ctx.answerCallbackQuery(favorite ? "Добавлено в мои боты" : "Убрано из моих ботов");
+    await ctx.editMessageText(`${product.icon} ${product.name}\n\n${product.tagline}\n\n${product.description}`, {
+      reply_markup: productCardKeyboard(ctx.from.id, product)
     });
   });
 
   bot.callbackQuery("hub:suggest", async (ctx) => {
     await ctx.answerCallbackQuery();
     ctx.session.waitingSuggestion = true;
+    ctx.session.waitingSearch = false;
     await ctx.editMessageText("Какого полезного бота вам не хватает? Опишите задачу одним сообщением.", {
       reply_markup: new InlineKeyboard().text("Отмена", "hub:home")
     });
   });
 
   bot.on("message:text", async (ctx) => {
+    if (ctx.session.waitingSearch) {
+      const query = ctx.message.text.trim().replace(/\s+/g, " ");
+      if (query.length < 3 || query.length > 200) return ctx.reply("Опишите задачу текстом от 3 до 200 символов.");
+      const items = searchProducts(query).slice(0, 4);
+      ctx.session.waitingSearch = false;
+      if (!items.length) {
+        return ctx.reply("Подходящего бота пока нет. Можно предложить идею через кнопку в главном меню.", { reply_markup: homeKeyboard() });
+      }
+      return ctx.reply(`Подходящие боты\n\n${items.map((product) => `${product.icon} ${product.name}\n${product.tagline}`).join("\n\n")}`, {
+        reply_markup: productKeyboard(items)
+      });
+    }
     if (!ctx.session.waitingSuggestion) return showHome(ctx);
     const suggestion = ctx.message.text.trim().replace(/\s+/g, " ");
     if (suggestion.length < 5 || suggestion.length > 500) {

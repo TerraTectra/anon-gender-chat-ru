@@ -28,6 +28,13 @@ CREATE TABLE IF NOT EXISTS suggestions (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS favorites (
+  user_id INTEGER NOT NULL,
+  product_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, product_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_hub_opens_product ON opens(product_id, created_at);
 `;
 
@@ -89,6 +96,24 @@ export class HubStore {
     `).all(`-${days} days`, limit);
   }
 
+  favoriteIds(userId) {
+    return this.db.prepare("SELECT product_id FROM favorites WHERE user_id = ? ORDER BY created_at")
+      .all(userId).map((row) => row.product_id);
+  }
+
+  isFavorite(userId, productId) {
+    return Boolean(this.db.prepare("SELECT 1 FROM favorites WHERE user_id = ? AND product_id = ?").get(userId, productId));
+  }
+
+  toggleFavorite(userId, productId) {
+    if (this.isFavorite(userId, productId)) {
+      this.db.prepare("DELETE FROM favorites WHERE user_id = ? AND product_id = ?").run(userId, productId);
+      return false;
+    }
+    this.db.prepare("INSERT INTO favorites (user_id, product_id) VALUES (?, ?)").run(userId, productId);
+    return true;
+  }
+
   sourceStats(limit = 10) {
     return this.db.prepare(`
       SELECT source, COUNT(*) AS users FROM users
@@ -101,7 +126,8 @@ export class HubStore {
       users: this.db.prepare("SELECT COUNT(*) AS count FROM users").get().count,
       opens: this.db.prepare("SELECT COUNT(*) AS count FROM opens").get().count,
       suggestions: this.db.prepare("SELECT COUNT(*) AS count FROM suggestions").get().count,
-      pendingSuggestions: this.db.prepare("SELECT COUNT(*) AS count FROM suggestions WHERE status = 'new'").get().count
+      pendingSuggestions: this.db.prepare("SELECT COUNT(*) AS count FROM suggestions WHERE status = 'new'").get().count,
+      favorites: this.db.prepare("SELECT COUNT(*) AS count FROM favorites").get().count
     };
   }
 
