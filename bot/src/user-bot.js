@@ -2,6 +2,7 @@ import { Bot, session } from "grammy";
 import { Store } from "./store.js";
 import { showCatalog } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
+import { inviteKeyboard } from "./referrals.js";
 import {
   confirmReportKeyboard,
   filterGenderKeyboard,
@@ -161,7 +162,7 @@ export function createUserBot(token, dbPath) {
     const invited = store.invitedCount(ctx.from.id);
     await ctx.reply(
       `Ваша ссылка:\n${link}\n\nПриглашено друзей: ${invited}. Чем больше людей онлайн, тем быстрее находится собеседник.`,
-      { reply_markup: menuKeyboard }
+      { reply_markup: inviteKeyboard(link, "Анонимный чат один на один с безопасным разделением 12-17 и 18+") }
     );
   }
 

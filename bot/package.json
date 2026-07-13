@@ -7,7 +7,8 @@
     "start": "node src/index.js",
     "start:user": "node src/user-bot-standalone.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "profiles": "node scripts/update-profiles.js"
   },
   "engines": {
     "node": ">=22.5"
