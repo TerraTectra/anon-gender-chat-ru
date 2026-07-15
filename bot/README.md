@@ -1,5 +1,13 @@
 # Telegram Bot Network
 
+## Entertainment launch
+
+- `@TectraQuizBot` combines short quizzes, scores, referrals and party modes: truth, dare, would-you-rather, charades and icebreakers.
+- `@TectraFun` is prepared for entertainment prompts three times a day at 08:45, 14:15 and 20:45 Moscow time; publishing activates after the Admin Hub receives channel posting rights.
+- `@TectraQuiz` is prepared for quiz posts twice a day at 11:00 and 19:30 Moscow time under the same permission gate.
+- The AI, focus and money channels now publish twice a day. Every schedule slot is tracked separately, so restarts do not create duplicate posts.
+- A separate Party bot is implemented but remains optional because the Telegram owner account reached its 20-bot limit; all Party modes are available inside `@TectraQuizBot`.
+
 Одна Node.js-служба запускает пользовательские продукты и общую закрытую админку. Данные каждого продукта хранятся в отдельной SQLite-базе.
 
 Служба также ведёт контентную сеть TerraTectra: планирует публикации из очередей, защищает их от повторной отправки после перезапуска и показывает состояние каналов в админке.

@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { channelLink, contentChannels, productLink, products, productsByCategory, recommendationIntents, searchProducts } from "../src/products.js";
 
 test("product catalog has unique bots and tracked links", () => {
-  assert.equal(products.length, 6);
+  assert.equal(products.length, 7);
   assert.equal(new Set(products.map((item) => item.id)).size, products.length);
   assert.equal(new Set(products.map((item) => item.username)).size, products.length);
   assert.ok(productsByCategory("communication").length >= 2);
+  assert.equal(productsByCategory("entertainment").length, 1);
   assert.match(productLink(products[0], "src_hub"), /\?start=src_hub_anon$/);
   assert.equal(searchProducts("напомнить о делах")[0].id, "tasks");
   assert.deepEqual(searchProducts("Мне нужно напомнить о делах").map((product) => product.id), ["tasks"]);
@@ -15,7 +16,7 @@ test("product catalog has unique bots and tracked links", () => {
 });
 
 test("content channels have unique public links", () => {
-  assert.equal(contentChannels.length, 3);
+  assert.equal(contentChannels.length, 5);
   assert.equal(new Set(contentChannels.map((channel) => channel.username)).size, contentChannels.length);
   assert.equal(channelLink(contentChannels[0]), "https://t.me/TerraTectraAI");
 });

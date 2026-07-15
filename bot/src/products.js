@@ -58,6 +58,16 @@ export const products = [
     keywords: ["задачи", "дела", "напоминания", "напомнить", "список", "планы", "организация"],
     tagline: "Задачи и напоминания в Telegram",
     description: "Быстро создаёт задачу, напоминает в нужное время и считает выполненные дела."
+  },
+  {
+    id: "quiz",
+    category: "entertainment",
+    name: "Tectra Quiz",
+    username: "TectraQuizBot",
+    icon: "🧠",
+    keywords: ["квиз", "викторина", "вопросы", "знания", "игра", "развлечение", "эрудиция"],
+    tagline: "Короткие вопросы на кругозор со счётом",
+    description: "Быстрые викторины с вариантами ответа, объяснениями, личным результатом и приглашениями друзей."
   }
 ];
 
@@ -82,13 +92,28 @@ export const contentChannels = [
     username: "TerraTectraMoney",
     icon: "💰",
     tagline: "Бытовой учёт денег и устойчивые финансовые привычки"
+  },
+  {
+    id: "fun",
+    name: "Tectra Развлечения",
+    username: "TectraFun",
+    icon: "🎉",
+    tagline: "Квизы, загадки, мини-игры и идеи для нескучного перерыва"
+  },
+  {
+    id: "quiz",
+    name: "Tectra Квиз",
+    username: "TectraQuiz",
+    icon: "🧠",
+    tagline: "Вопросы на кругозор, короткие разборы и ежедневные испытания"
   }
 ];
 
 export const categories = [
   { id: "communication", label: "💬 Общение и люди" },
   { id: "productivity", label: "🎯 Работа и фокус" },
-  { id: "life", label: "🏠 Для жизни" }
+  { id: "life", label: "🏠 Для жизни" },
+  { id: "entertainment", label: "🎉 Развлечения" }
 ];
 
 export const recommendationIntents = [
@@ -97,7 +122,8 @@ export const recommendationIntents = [
   { id: "talk", label: "💬 Найти собеседника", productId: "anon" },
   { id: "english", label: "🇬🇧 Практиковать английский", productId: "english" },
   { id: "team", label: "🎮 Найти тиммейта", productId: "game" },
-  { id: "money", label: "💰 Разобраться с деньгами", productId: "budget" }
+  { id: "money", label: "💰 Разобраться с деньгами", productId: "budget" },
+  { id: "quiz", label: "🧠 Квиз или игры для компании", productId: "quiz" }
 ];
 
 export function productLink(product, source = "src_family_catalog") {

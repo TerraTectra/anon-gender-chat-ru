@@ -29,6 +29,28 @@ function scheduleMinutes(value = "00:00") {
   return hours < 24 && minutes < 60 ? hours * 60 + minutes : null;
 }
 
+function channelSchedules(channel) {
+  const values = Array.isArray(channel.schedule) ? channel.schedule : [channel.schedule];
+  return [...new Set(values.filter((value) => scheduleMinutes(value) !== null))]
+    .sort((left, right) => scheduleMinutes(left) - scheduleMinutes(right));
+}
+
+function publishedSlotsFor(state, channelId, date, schedules) {
+  const slots = state.publishedSlots?.[channelId]?.[date];
+  if (Array.isArray(slots)) return new Set(slots);
+  if (state.published[channelId] === date && schedules.length) return new Set([schedules[0]]);
+  return new Set();
+}
+
+function rememberPublishedSlots(state, channelId, date, slots) {
+  state.publishedSlots ||= {};
+  state.publishedSlots[channelId] ||= {};
+  state.publishedSlots[channelId][date] = [...new Set(slots)].sort();
+
+  const dates = Object.keys(state.publishedSlots[channelId]).sort().reverse();
+  for (const staleDate of dates.slice(14)) delete state.publishedSlots[channelId][staleDate];
+}
+
 export class ChannelPublisher {
   constructor(api, configPath, statePath, now = () => new Date()) {
     this.api = api;
@@ -53,12 +75,13 @@ export class ChannelPublisher {
       const parsed = JSON.parse(fs.readFileSync(this.statePath, "utf8"));
       return {
         published: parsed.published || {},
+        publishedSlots: parsed.publishedSlots || {},
         cursors: parsed.cursors || {},
         sent: parsed.sent || {},
         lastPublishedAt: parsed.lastPublishedAt || {}
       };
     } catch {
-      return { published: {}, cursors: {}, sent: {}, lastPublishedAt: {} };
+      return { published: {}, publishedSlots: {}, cursors: {}, sent: {}, lastPublishedAt: {} };
     }
   }
 
@@ -69,12 +92,13 @@ export class ChannelPublisher {
     fs.renameSync(temporary, this.statePath);
   }
 
-  async publishChannel(channel, state, date) {
+  async publishChannel(channel, state, date, completedSlots) {
     const cursor = Number(state.cursors[channel.id] || 0) % channel.posts.length;
     await this.api.sendMessage(channel.chatId, channel.posts[cursor], {
       link_preview_options: { is_disabled: true }
     });
     state.published[channel.id] = moscowParts(date).date;
+    rememberPublishedSlots(state, channel.id, moscowParts(date).date, completedSlots);
     state.cursors[channel.id] = (cursor + 1) % channel.posts.length;
     state.sent[channel.id] = Number(state.sent[channel.id] || 0) + 1;
     state.lastPublishedAt[channel.id] = date.toISOString();
@@ -88,13 +112,17 @@ export class ChannelPublisher {
     const published = [];
 
     for (const channel of this.readConfig()) {
-      const plannedMinutes = scheduleMinutes(channel.schedule);
+      const schedules = channelSchedules(channel);
       const days = channel.days?.length ? channel.days : WEEKDAYS;
       if (!channel.enabled || !channel.chatId || !channel.posts?.length) continue;
-      if (!days.includes(current.weekday) || plannedMinutes === null || current.minutes < plannedMinutes) continue;
-      if (state.published[channel.id] === current.date) continue;
+      if (!days.includes(current.weekday) || !schedules.length) continue;
 
-      published.push(await this.publishChannel(channel, state, date));
+      const completed = publishedSlotsFor(state, channel.id, current.date, schedules);
+      const due = schedules.filter((slot) => scheduleMinutes(slot) <= current.minutes && !completed.has(slot));
+      if (!due.length) continue;
+
+      for (const slot of due) completed.add(slot);
+      published.push(await this.publishChannel(channel, state, date, [...completed]));
     }
     return published;
   }
@@ -107,8 +135,11 @@ export class ChannelPublisher {
     for (const channel of this.readConfig()) {
       if (!channel.enabled || !channel.chatId || !channel.posts?.length) continue;
       if (selected && !selected.has(channel.id)) continue;
-      if (state.published[channel.id] === current.date) continue;
-      published.push(await this.publishChannel(channel, state, date));
+      const schedules = channelSchedules(channel);
+      const completed = publishedSlotsFor(state, channel.id, current.date, schedules);
+      if (completed.size) continue;
+      completed.add("manual");
+      published.push(await this.publishChannel(channel, state, date, [...completed]));
     }
     return published;
   }
@@ -120,7 +151,7 @@ export class ChannelPublisher {
       title: channel.title,
       chatId: channel.chatId,
       enabled: Boolean(channel.enabled),
-      schedule: channel.schedule,
+      schedule: channelSchedules(channel).join(", "),
       days: channel.days || WEEKDAYS,
       queued: channel.posts?.length || 0,
       sent: Number(state.sent[channel.id] || 0),

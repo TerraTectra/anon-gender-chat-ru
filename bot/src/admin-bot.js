@@ -3,6 +3,7 @@ import path from "node:path";
 import { Bot, InlineKeyboard } from "grammy";
 import { adminKeyboard } from "./keyboards.js";
 import { BudgetStore } from "./budget-store.js";
+import { EngagementStore } from "./engagement-store.js";
 import { FocusStore } from "./focus-store.js";
 import { GameStore } from "./game-store.js";
 import { LanguageStore } from "./language-store.js";
@@ -44,6 +45,8 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   const budgetStore = options.budgetDbPath ? new BudgetStore(options.budgetDbPath) : null;
   const hubStore = options.hubDbPath ? new HubStore(options.hubDbPath) : null;
   const taskStore = options.taskDbPath ? new TaskStore(options.taskDbPath) : null;
+  const quizStore = options.quizDbPath ? new EngagementStore(options.quizDbPath) : null;
+  const partyStore = options.partyDbPath ? new EngagementStore(options.partyDbPath) : null;
   const admins = parseAdmins(adminIds);
   const bot = new Bot(token);
   const healthPath = path.resolve(options.healthPath || "./data/health.json");
@@ -61,6 +64,9 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     .text("Бюджет", "admin_product:budget")
     .text("Task Pulse", "admin_product:tasks")
     .row()
+    .text("Tectra Quiz", "admin_product:quiz")
+    .text("Tectra Party", "admin_product:party")
+    .row()
     .text("TerraTectra Hub", "admin_product:hub");
 
   function networkOverviewText() {
@@ -71,12 +77,14 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     const budget = budgetStore?.stats();
     const hub = hubStore?.stats();
     const tasks = taskStore?.stats();
-    const productStats = [chat, english, focus, game, budget, hub, tasks].filter(Boolean);
+    const quiz = quizStore?.stats();
+    const party = partyStore?.stats();
+    const productStats = [chat, english, focus, game, budget, hub, tasks, quiz, party].filter(Boolean);
     const registrations = productStats.reduce((sum, item) => sum + (item.users || 0), 0);
     const activeNow = (chat.chatting || 0) + (english?.chatting || 0) + (game?.chatting || 0)
       + (focus?.active || 0) + (tasks?.active || 0);
     const usefulActions = (focus?.completed || 0) + (budget?.entries || 0) + (tasks?.done || 0)
-      + (hub?.opens || 0);
+      + (hub?.opens || 0) + (quiz?.actions || 0) + (party?.actions || 0);
     const reports = (chat.reports || 0) + (english?.reports || 0) + (game?.reports || 0);
 
     return `TerraTectra Admin Hub\n\nПродуктов: ${productStats.length}\nРегистраций в продуктах: ${registrations}\nАктивно сейчас: ${activeNow}\nПолезных действий: ${usefulActions}\n\nНовых лидов: ${hub?.pendingLeads || 0}\nНовых идей: ${hub?.pendingSuggestions || 0}\nНовых жалоб: ${reports}`;
@@ -106,6 +114,13 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       const growth = hubStore.growthStats();
       const discovery = hubStore.openSourceStats(5).map((row) => `${row.source}: ${row.opens} (${row.users} чел.)`).join("\n");
       return `TerraTectra Bots\n\nПользователей: ${current.users}\nПереходов к ботам: ${current.opens}\nИзбранных: ${current.favorites}\nЛидов: ${current.leads}\nНовых лидов: ${current.pendingLeads}\nПредложений: ${current.suggestions}\nНовых идей: ${current.pendingSuggestions}\n\nЗа 7 дней\nНовые: ${growth.new7}\nПереходы к ботам: ${growth.opens7}\nЛиды: ${growth.leads7}\nПредложения: ${growth.suggestions7}\n\nОткуда открывают ботов\n${discovery || "данных пока нет"}`;
+    }
+    if ((product === "quiz" && quizStore) || (product === "party" && partyStore)) {
+      const productStore = product === "quiz" ? quizStore : partyStore;
+      const name = product === "quiz" ? "Tectra Quiz" : "Tectra Party";
+      const current = productStore.stats();
+      const growth = productStore.growthStats();
+      return `${name}\n\nПользователей: ${current.users}\nДействий: ${current.actions}\nБаллов: ${current.score}\n\nЗа 7 дней\nНовые: ${growth.new7}\nПо приглашениям: ${growth.referred}\nДействий: ${growth.actions7}\nАктивных пользователей: ${growth.active7}`;
     }
     return "Этот продукт пока не подключён к админ-хабу.";
   }
@@ -145,7 +160,9 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       ["Game Mate", gameStore],
       ["Карманный бюджет", budgetStore],
       ["TerraTectra Hub", hubStore],
-      ["Task Pulse", taskStore]
+      ["Task Pulse", taskStore],
+      ["Tectra Quiz", quizStore],
+      ["Tectra Party", partyStore]
     ].filter(([, productStore]) => productStore);
     const growth = products.map(([name, productStore]) => [name, productStore.growthStats()]);
     const newToday = growth.reduce((sum, [, item]) => sum + (item.newToday || 0), 0);
@@ -156,7 +173,8 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       + (item.completed7 || 0)
       + (item.entries7 || 0)
       + (item.done7 || 0)
-      + (item.opens7 || 0), 0);
+      + (item.opens7 || 0)
+      + (item.actions7 || 0), 0);
     const productLines = growth
       .sort((left, right) => (right[1].new7 || 0) - (left[1].new7 || 0))
       .map(([name, item]) => `${name}: +${item.new7 || 0}`)
@@ -228,6 +246,14 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       const tasks = taskStore.stats();
       parts.push(`Task Pulse\nПользователей: ${tasks.users}\nАктивных задач: ${tasks.active}\nВыполнено: ${tasks.done}\nЗаблокировано: ${tasks.banned}`);
     }
+    if (quizStore) {
+      const quiz = quizStore.stats();
+      parts.push(`Tectra Quiz\nПользователей: ${quiz.users}\nОтветов: ${quiz.actions}\nПравильных: ${quiz.score}`);
+    }
+    if (partyStore) {
+      const party = partyStore.stats();
+      parts.push(`Tectra Party\nПользователей: ${party.users}\nОткрыто карточек: ${party.actions}`);
+    }
     return parts.join("\n\n");
   }
 
@@ -255,6 +281,11 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       const growth = taskStore.growthStats();
       parts.push(`Task Pulse\nНовые сегодня: ${growth.newToday}\nНовые за 7 дней: ${growth.new7}\nПо приглашениям: ${growth.referred}\nСоздано задач: ${growth.tasks7}\nВыполнено: ${growth.done7}`);
     }
+    for (const [name, productStore] of [["Tectra Quiz", quizStore], ["Tectra Party", partyStore]]) {
+      if (!productStore) continue;
+      const growth = productStore.growthStats();
+      parts.push(`${name}\nНовые сегодня: ${growth.newToday}\nНовые за 7 дней: ${growth.new7}\nПо приглашениям: ${growth.referred}\nДействий: ${growth.actions7}\nАктивных пользователей: ${growth.active7}`);
+    }
     return `Метрики за последние 7 дней\n\n${parts.join("\n\n")}`;
   }
 
@@ -266,7 +297,9 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       ["Game Mate", gameStore],
       ["Карманный бюджет", budgetStore],
       ["TerraTectra Bots", hubStore],
-      ["Task Pulse", taskStore]
+      ["Task Pulse", taskStore],
+      ["Tectra Quiz", quizStore],
+      ["Tectra Party", partyStore]
     ];
     const parts = products.filter(([, productStore]) => productStore).map(([name, productStore]) => {
       const rows = productStore.sourceStats(10);
@@ -284,7 +317,9 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       ["Game Mate", gameStore],
       ["Карманный бюджет", budgetStore],
       ["TerraTectra Bots", hubStore],
-      ["Task Pulse", taskStore]
+      ["Task Pulse", taskStore],
+      ["Tectra Quiz", quizStore],
+      ["Tectra Party", partyStore]
     ];
     const rows = aggregateSourceStats(products);
     const lines = rows.map((row, index) => `${index + 1}. ${row.source}: ${row.users} · продуктов: ${row.products}`);
@@ -332,7 +367,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   bot.hears(["🏠 Обзор", "🔄 Обновить"], (ctx) => ctx.reply(networkOverviewText(), { reply_markup: adminKeyboard }));
   bot.command("products", (ctx) => ctx.reply("Выберите продукт:", { reply_markup: productKeyboard }));
   bot.hears("🤖 Боты", (ctx) => ctx.reply("Выберите продукт:", { reply_markup: productKeyboard }));
-  bot.callbackQuery(/^admin_product:(anon|english|focus|game|budget|tasks|hub)$/, async (ctx) => {
+  bot.callbackQuery(/^admin_product:(anon|english|focus|game|budget|tasks|quiz|party|hub)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(productStatsText(ctx.match[1]), { reply_markup: productKeyboard });
   });

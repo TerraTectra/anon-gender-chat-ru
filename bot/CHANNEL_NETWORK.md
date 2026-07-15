@@ -1,5 +1,17 @@
 # TerraTectra Channel Network
 
+## Active schedule
+
+| Channel | Moscow time | Purpose |
+| --- | --- | --- |
+| `@TerraTectraAI` | 09:15, 16:45 | Practical AI and automation |
+| `@TerraTectraFocus` | 10:30, 15:30 | Focus and work habits |
+| `@TerraTectraMoney` | 11:45, 18:30 | Personal finance habits |
+| `@TectraFun` | 08:45, 14:15, 20:45 | Prepared; awaiting publisher admin rights |
+| `@TectraQuiz` | 11:00, 19:30 | Prepared; awaiting publisher admin rights |
+
+The publisher accepts either one `schedule` value or an array of time slots. It records each completed slot separately and, after downtime, publishes only the latest overdue item instead of flooding a channel.
+
 Контентная сеть дополняет продуктовых ботов и ведёт аудиторию в семейный хаб через отдельные метки источников.
 
 ## Первая линейка

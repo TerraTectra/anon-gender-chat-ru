@@ -34,3 +34,6 @@
 - Приглашённые пользователи по реферальным ссылкам.
 
 Следующий бот запускается только после первых 100 стартов или 20 состоявшихся диалогов текущего пилота. Это позволяет понять, какая тема действительно работает, не размазывая трафик между пустыми очередями.
+# Entertainment pilot
+
+`@TectraQuizBot` is the active entertainment pilot. It supports `/quiz`, `/party`, `/score`, `/invite`, `/help` and `/bots`, keeps engagement and referral statistics in a separate SQLite database, and reports them in the private Admin Hub. The standalone Party implementation can be enabled later with `PARTY_BOT_TOKEN`; until the owner account bot limit is raised, the same modes run inside the Quiz bot.
