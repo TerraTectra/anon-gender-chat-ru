@@ -1,149 +1,27 @@
 export const products = [
-  {
-    id: "anon",
-    category: "social",
-    name: "Анонимный чат 12+",
-    username: "anon_gender_chat_ru_bot",
-    icon: "💬",
-    keywords: ["чат", "общение", "знакомства", "собеседник", "анонимно", "поговорить"],
-    tagline: "Анонимное общение один на один",
-    description: "Быстрый поиск собеседника, фильтры по возрасту и полу, жалобы и блокировки."
-  },
-  {
-    id: "english",
-    category: "learning",
-    name: "Tectra Study Cards",
-    username: "EnglishTalkMatchBot",
-    icon: "📚",
-    keywords: ["учёба", "карточки", "flashcards", "повторение", "экзамен", "запомнить", "слова"],
-    tagline: "Карточки и повторение без отдельного приложения",
-    description: "Создаёт личные flashcards и чаще возвращает карточки, которые пользователь знает хуже."
-  },
-  {
-    id: "focus",
-    category: "utility",
-    name: "Tectra Random",
-    username: "FocusSprintTimerBot",
-    icon: "🎲",
-    keywords: ["рандом", "случайно", "розыгрыш", "выбрать", "жребий", "кубик", "монетка", "random"],
-    tagline: "Рандомайзер и быстрые жеребьёвки",
-    description: "Случайные числа, выбор из списка, монетка, кубик и перемешивание вариантов."
-  },
-  {
-    id: "game",
-    category: "social",
-    name: "Tectra Meet",
-    username: "GameMateFinderRuBot",
-    icon: "💞",
-    keywords: ["знакомства", "дейтинг", "люди", "город", "интересы", "пара", "встреча", "18+"],
-    tagline: "Знакомства по городу и интересам",
-    description: "Короткие анкеты 18+, поиск людей в своём городе и контакт при взаимной симпатии."
-  },
-  {
-    id: "budget",
-    category: "utility",
-    name: "Tectra Rates",
-    username: "PocketBudgetRuBot",
-    icon: "💱",
-    keywords: ["валюта", "курс", "доллар", "евро", "злотый", "конвертер", "bitcoin", "crypto", "крипта"],
-    tagline: "Конвертер валют и криптокурсы",
-    description: "Быстрый пересчёт сумм между валютами и справочные цены популярных криптовалют."
-  },
-  {
-    id: "hub",
-    category: "utility",
-    name: "Tectra Tools",
-    username: "TerraTectraBotsBot",
-    icon: "🧰",
-    keywords: ["qr", "пароль", "password", "uuid", "sha256", "hash", "base64", "кодирование", "инструменты"],
-    tagline: "QR, пароли, UUID, SHA-256 и кодирование текста",
-    description: "Набор быстрых Telegram-утилит для QR-кодов, паролей, UUID, хешей и кодирования текста."
-  },
-  {
-    id: "tasks",
-    category: "creator",
-    name: "Tectra Post Studio",
-    username: "DevTaks_bot",
-    icon: "📝",
-    keywords: ["пост", "канал", "публикация", "контент", "текст", "ссылка", "админ", "автор"],
-    tagline: "Подготовка и публикация постов в Telegram",
-    description: "Чистит текст, создаёт ссылки и публикует пост в каналы, где бот назначен администратором."
-  },
-  {
-    id: "quiz",
-    category: "utility",
-    name: "Tectra Media Saver",
-    username: "TectraQuizBot",
-    icon: "📥",
-    keywords: ["скачать", "download", "media", "видео", "файл", "сохранить", "ссылка", "аудио"],
-    tagline: "Сохранение публичных файлов по прямой ссылке",
-    description: "Забирает прямой публичный URL и возвращает файл в Telegram; без обхода DRM и приватного доступа."
-  },
-  {
-    id: "party",
-    category: "admin",
-    name: "Tectra Join Guard",
-    username: "TectraPartyBot",
-    icon: "🛡",
-    keywords: ["заявки", "вступление", "группа", "канал", "админ", "модерация", "approve", "join"],
-    tagline: "Автоприём заявок в группы и каналы",
-    description: "Автоматически принимает join requests там, где бот назначен администратором."
-  }
+  { id:"anon", category:"social", name:"Анонимный чат 12+", username:"anon_gender_chat_ru_bot", icon:"💬", keywords:["чат","общение","анонимно","рулетка","собеседник"], tagline:"Анонимное общение один на один", description:"Быстрый поиск собеседника, фильтры, жалобы и блокировки." },
+  { id:"music", category:"media", name:"Tectra Music", username:"EnglishTalkMatchBot", icon:"🎵", keywords:["музыка","песня","скачать","трек","audio","music"], tagline:"Найти и скачать музыку", description:"Ищет трек по названию или публичной ссылке и возвращает аудио в Telegram." },
+  { id:"random", category:"utility", name:"Tectra Random", username:"FocusSprintTimerBot", icon:"🎲", keywords:["рандом","рандомайзер","жребий","победитель","случайный","random"], tagline:"Рандомайзер и жеребьёвки", description:"Числа, выбор из списка, монетка, кубик и перемешивание." },
+  { id:"dating", category:"social", name:"Tectra Meet", username:"GameMateFinderRuBot", icon:"💞", keywords:["знакомства","дейтинг","анкеты","город","интересы","dating"], tagline:"Знакомства 18+ по городу и интересам", description:"Анкеты и взаимные симпатии с раскрытием контакта только при мэтче." },
+  { id:"moderator", category:"admin", name:"Tectra Moderator", username:"PocketBudgetRuBot", icon:"🛡", keywords:["модератор","антиспам","антифлуд","группа","ссылки","moderation"], tagline:"Защита Telegram-групп", description:"Удаляет нежелательные ссылки и явный флуд; управляется администраторами." },
+  { id:"post", category:"admin", name:"Tectra Post Bot", username:"DevTaks_bot", icon:"📝", keywords:["пост","канал","публикация","формат","post","content"], tagline:"Подготовка и публикация постов", description:"Форматирует текст и публикует его в ваши Telegram-каналы." },
+  { id:"video", category:"media", name:"Tectra Video Saver", username:"TectraQuizBot", icon:"📥", keywords:["видео","скачать","тикток","youtube","reels","video","download"], tagline:"Скачать видео по публичной ссылке", description:"Получает видео с поддерживаемых публичных платформ без обхода DRM и приватного доступа." },
+  { id:"approve", category:"admin", name:"Tectra Auto Approve", username:"TectraPartyBot", icon:"✅", keywords:["заявки","автоприем","вступление","канал","группа","join"], tagline:"Автоприём заявок на вступление", description:"Автоматически принимает join requests в группах и каналах." },
+  { id:"nearby", category:"utility", name:"Tectra Nearby", username:"TerraTectraBotsBot", icon:"📍", keywords:["рядом","кафе","аптека","банкомат","ресторан","места","nearby"], tagline:"Найти полезные места рядом", description:"Ищет кафе, рестораны, аптеки, банкоматы, АЗС и отели рядом через OpenStreetMap." }
 ];
 
 export const contentChannels = [
-  { id: "ai", name: "TerraTectra AI Практика", username: "TerraTectraAI", icon: "🧩", tagline: "Прикладной ИИ и автоматизация без новостного шума" },
-  { id: "focus", name: "TerraTectra Фокус", username: "TerraTectraFocus", icon: "🎯", tagline: "Задачи, внимание и спокойная система работы" },
-  { id: "money", name: "TerraTectra Деньги", username: "TerraTectraMoney", icon: "💰", tagline: "Бытовой учёт денег и устойчивые финансовые привычки" },
-  { id: "fun", name: "Tectra Развлечения", username: "TectraFun", icon: "🎉", tagline: "Развлекательный канал сети" },
-  { id: "quiz", name: "Tectra Квиз", username: "TectraQuiz", icon: "🧠", tagline: "Короткие вопросы и знания" }
+  {id:"ai",name:"TerraTectra AI Практика",username:"TerraTectraAI",icon:"🧩",tagline:"Прикладной ИИ и автоматизация"},
+  {id:"focus",name:"TerraTectra Фокус",username:"TerraTectraFocus",icon:"🎯",tagline:"Задачи и внимание"},
+  {id:"money",name:"TerraTectra Деньги",username:"TerraTectraMoney",icon:"💰",tagline:"Бытовые финансы"},
+  {id:"fun",name:"Tectra Развлечения",username:"TectraFun",icon:"🎉",tagline:"Развлечения"},
+  {id:"quiz",name:"Tectra Квиз",username:"TectraQuiz",icon:"🧠",tagline:"Квизы"}
 ];
-
-export const categories = [
-  { id: "social", label: "💬 Общение" },
-  { id: "utility", label: "🧰 Утилиты" },
-  { id: "creator", label: "📝 Для каналов" },
-  { id: "admin", label: "🛡 Для админов" },
-  { id: "learning", label: "📚 Учёба" }
+export const categories=[{id:"social",label:"💬 Общение"},{id:"media",label:"🎵 Медиа"},{id:"admin",label:"🛡 Для каналов и групп"},{id:"utility",label:"🧰 Утилиты"}];
+export const recommendationIntents=[
+  {id:"talk",label:"💬 Анонимно пообщаться",productId:"anon"},{id:"music",label:"🎵 Скачать музыку",productId:"music"},{id:"video",label:"📥 Скачать видео",productId:"video"},{id:"dating",label:"💞 Знакомства",productId:"dating"},{id:"moderate",label:"🛡 Защитить группу",productId:"moderator"},{id:"approve",label:"✅ Принимать заявки",productId:"approve"},{id:"post",label:"📝 Опубликовать пост",productId:"post"},{id:"random",label:"🎲 Выбрать случайно",productId:"random"},{id:"nearby",label:"📍 Найти рядом",productId:"nearby"}
 ];
-
-export const recommendationIntents = [
-  { id: "talk", label: "💬 Поговорить анонимно", productId: "anon" },
-  { id: "meet", label: "💞 Познакомиться", productId: "game" },
-  { id: "download", label: "📥 Сохранить файл", productId: "quiz" },
-  { id: "random", label: "🎲 Выбрать случайно", productId: "focus" },
-  { id: "rates", label: "💱 Узнать курс", productId: "budget" },
-  { id: "tools", label: "🧰 Быстрые инструменты", productId: "hub" },
-  { id: "post", label: "📝 Сделать пост", productId: "tasks" },
-  { id: "join", label: "🛡 Принимать заявки", productId: "party" },
-  { id: "study", label: "📚 Учить карточки", productId: "english" }
-];
-
-export function productLink(product, source = "src_family_catalog") {
-  return `https://t.me/${product.username}?start=${source}_${product.id}`;
-}
-
-export function channelLink(channel) {
-  return `https://t.me/${channel.username}`;
-}
-
-export function productsByCategory(category) {
-  return category === "all" ? products : products.filter((product) => product.category === category);
-}
-
-export function searchProducts(query) {
-  const stopWords = new Set(["мне", "нужно", "хочу", "для", "чтобы", "бот", "найти", "помоги"]);
-  const words = (query.toLowerCase().replace(/ё/g, "е").match(/[a-zа-я0-9+]+/g) || [])
-    .filter((word) => word.length >= 3 && !stopWords.has(word));
-  if (!words.length) return [];
-  return products
-    .map((product) => {
-      const haystack = [product.name, product.tagline, product.description, ...product.keywords]
-        .join(" ").toLowerCase().replace(/ё/g, "е");
-      const score = words.reduce((total, word) => total + (haystack.includes(word) ? 1 : 0), 0);
-      return { product, score };
-    })
-    .filter((result) => result.score > 0)
-    .sort((a, b) => b.score - a.score || a.product.name.localeCompare(b.product.name, "ru"))
-    .map((result) => result.product);
-}
+export function productLink(product,source="src_family_catalog"){return `https://t.me/${product.username}?start=${source}_${product.id}`;}
+export function channelLink(channel){return `https://t.me/${channel.username}`;}
+export function productsByCategory(category){return category==="all"?products:products.filter(p=>p.category===category);}
+export function searchProducts(query){const stop=new Set(["мне","нужно","хочу","для","чтобы","бот","найти","помоги"]);const words=(query.toLowerCase().replace(/ё/g,"е").match(/[a-zа-я0-9]+/g)||[]).filter(w=>w.length>=3&&!stop.has(w));if(!words.length)return[];return products.map(product=>{const h=[product.name,product.tagline,product.description,...product.keywords].join(" ").toLowerCase().replace(/ё/g,"е");return{product,score:words.reduce((n,w)=>n+(h.includes(w)?1:0),0)};}).filter(x=>x.score>0).sort((a,b)=>b.score-a.score||a.product.name.localeCompare(b.product.name,"ru")).map(x=>x.product);}

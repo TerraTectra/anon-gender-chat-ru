@@ -8,11 +8,11 @@ export function catalogKeyboard(originProductId = "family") {
   for (const product of products.filter(({ id }) => id !== originProductId)) {
     keyboard.url(`${product.icon} ${product.name}`, productLink(product, `src_catalog_${originProductId}`)).row();
   }
-  return keyboard.url("🏠 Открыть семейный хаб", `https://t.me/TerraTectraBotsBot?start=src_catalog_${originProductId}_hub`);
+  return keyboard;
 }
 
 export function showCatalog(ctx, originProductId = "family") {
-  return ctx.reply("Выберите полезный бот из нашей сети.", { reply_markup: catalogKeyboard(originProductId) });
+  return ctx.reply("Выберите полезный бот из сети TerraTectra.", { reply_markup: catalogKeyboard(originProductId) });
 }
 
 export function createCatalogHandler(originProductId) {

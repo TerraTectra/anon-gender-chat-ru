@@ -52,8 +52,8 @@ export function retainedMediaFromMessage(message) {
 
 export function postChatKeyboard() {
   return new InlineKeyboard()
-    .url("🧠 Вопрос дня", "https://t.me/TectraQuizBot?start=src_anon_postchat_daily")
-    .url("🎉 Игра дня", "https://t.me/TectraPartyBot?start=src_anon_postchat_daily");
+    .url("📥 Скачать видео", "https://t.me/TectraQuizBot?start=src_anon_postchat_video")
+    .url("💞 Знакомства 18+", "https://t.me/GameMateFinderRuBot?start=src_anon_postchat_dating");
 }
 
 export function createUserBot(token, dbPath, options = {}) {

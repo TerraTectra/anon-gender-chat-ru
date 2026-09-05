@@ -2,255 +2,33 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
-import { Bot, InlineKeyboard, InputFile, session } from "grammy";
+import { Bot, InputFile } from "grammy";
 import { safeErrorSummary } from "./safe-error.js";
 import { parseStartSource } from "./tracking.js";
 
-const COMMON_SCHEMA = `
-PRAGMA journal_mode = WAL;
-CREATE TABLE IF NOT EXISTS niche_users (
-  id INTEGER PRIMARY KEY,
-  username TEXT,
-  source TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS niche_actions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  action TEXT NOT NULL,
-  meta TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_niche_actions_user ON niche_actions(user_id, created_at);
-`;
+const execFileAsync = promisify(execFile);
+const COMMON_SCHEMA=`PRAGMA journal_mode=WAL;CREATE TABLE IF NOT EXISTS niche_users(id INTEGER PRIMARY KEY,username TEXT,source TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS niche_actions(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,action TEXT NOT NULL,meta TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);CREATE INDEX IF NOT EXISTS idx_niche_actions_user ON niche_actions(user_id,created_at);`;
+class NicheStore{constructor(filename,schema=""){const p=path.resolve(filename);fs.mkdirSync(path.dirname(p),{recursive:true});this.db=new DatabaseSync(p);this.db.exec(COMMON_SCHEMA+schema);}close(){this.db.close();}user(ctx,source=null){if(!ctx?.from?.id)return;this.db.prepare(`INSERT INTO niche_users(id,username,source) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET username=excluded.username,source=COALESCE(niche_users.source,excluded.source),updated_at=CURRENT_TIMESTAMP`).run(ctx.from.id,ctx.from.username??null,source);}action(id,a,m=null){this.db.prepare("INSERT INTO niche_actions(user_id,action,meta) VALUES(?,?,?)").run(id,a,m==null?null:JSON.stringify(m));}}
+function trackedStart(store,handler){return async ctx=>{const s=parseStartSource(ctx.match,ctx.from.id);store.user(ctx,s);store.action(ctx.from.id,"start",s);await handler(ctx);};}
+function attachBasics(bot,store,profile){bot.closeStore=()=>store.close();bot.syncProfile=async()=>{const rs=await Promise.allSettled([bot.api.setMyName(profile.name),bot.api.setMyDescription(profile.description),bot.api.setMyShortDescription(profile.short),bot.api.setMyCommands(profile.commands)]);const n=rs.filter(x=>x.status==="rejected").length;if(n)console.error(`${profile.name} profile sync: ${n} failed`);};bot.catch(e=>console.error(`${profile.name} error`,safeErrorSummary(e)));return bot;}
+async function downloadWithYtDlp(target,argsPrefix=[]){const dir=fs.mkdtempSync(path.join(os.tmpdir(),"tectra-dl-"));const tmpl=path.join(dir,"%(title).80s.%(ext)s");try{const {stdout}=await execFileAsync("python",["-m","yt_dlp","--no-playlist","--no-progress","--max-filesize","45M","--print","after_move:filepath","-o",tmpl,...argsPrefix,target],{timeout:120000,windowsHide:true,maxBuffer:1024*1024});const lines=stdout.trim().split(/\r?\n/).filter(Boolean);const file=lines.at(-1);if(!file||!fs.existsSync(file))throw new Error("download missing");if(fs.statSync(file).size>45*1024*1024)throw new Error("too large");return{file,dir};}catch(e){fs.rmSync(dir,{recursive:true,force:true});throw e;}}
+function cleanupDownload(d){try{fs.rmSync(d.dir,{recursive:true,force:true});}catch{}}
 
-class NicheStore {
-  constructor(filename, schema = "") {
-    const absolute = path.resolve(filename);
-    fs.mkdirSync(path.dirname(absolute), { recursive: true });
-    this.db = new DatabaseSync(absolute);
-    this.db.exec(COMMON_SCHEMA + schema);
-  }
-  close() { this.db.close(); }
-  user(ctx, source = null) {
-    if (!ctx?.from?.id) return;
-    this.db.prepare(`INSERT INTO niche_users(id,username,source) VALUES(?,?,?)
-      ON CONFLICT(id) DO UPDATE SET username=excluded.username, source=COALESCE(niche_users.source, excluded.source), updated_at=CURRENT_TIMESTAMP`)
-      .run(ctx.from.id, ctx.from.username ?? null, source);
-  }
-  action(userId, action, meta = null) {
-    this.db.prepare("INSERT INTO niche_actions(user_id,action,meta) VALUES(?,?,?)").run(userId, action, meta == null ? null : JSON.stringify(meta));
-  }
-  countUsers() { return this.db.prepare("SELECT COUNT(*) count FROM niche_users").get().count; }
-}
+export function createStudyBot(token,dbPath){const store=new NicheStore(dbPath);const bot=new Bot(token);const help="🎵 Tectra Music\n\n/song запрос — найти и скачать первый публичный трек\n/song https://... — забрать аудио из публичной ссылки\n\nБез DRM, приватных источников и обхода авторизации. Лимит 45 МБ.";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.command("song",async ctx=>{const q=String(ctx.match||"").trim();if(!q)return ctx.reply("Формат: /song название песни или публичная ссылка");await ctx.reply("🎵 Ищу и готовлю аудио…");const target=/^https?:\/\//i.test(q)?q:`ytsearch1:${q}`;let d;try{d=await downloadWithYtDlp(target,["-f","bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio"]);store.user(ctx);store.action(ctx.from.id,"song",{query:!/^https?:/.test(q)});const ext=path.extname(d.file).toLowerCase();if([".m4a",".mp3",".ogg"].includes(ext))await ctx.replyWithAudio(new InputFile(d.file));else await ctx.replyWithDocument(new InputFile(d.file),{caption:"Аудио готово"});}catch{await ctx.reply("Не удалось получить этот трек. Попробуйте другую публичную ссылку или запрос.");}finally{if(d)cleanupDownload(d);}});return attachBasics(bot,store,{name:"Tectra Music",short:"Поиск и загрузка музыки из публичных источников.",description:"Находит музыку по запросу или публичной ссылке и возвращает аудиофайл в Telegram. Без DRM и приватного доступа.",commands:[{command:"song",description:"найти или скачать трек"},{command:"help",description:"помощь"}]});}
 
-function trackedStart(store, handler) {
-  return async (ctx) => {
-    const source = parseStartSource(ctx.match, ctx.from.id);
-    store.user(ctx, source);
-    store.action(ctx.from.id, "start", source);
-    await handler(ctx);
-  };
-}
+export function createRandomBot(token,dbPath,random=Math.random){const store=new NicheStore(dbPath);const bot=new Bot(token);const help="🎲 Tectra Random\n/number 1 100 — число\n/pick a | b | c — выбор\n/coin — монетка\n/dice — кубик\n/shuffle a | b | c — перемешать";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.command("number",async ctx=>{let[a,b]=String(ctx.match||"").trim().split(/\s+/).map(Number);if(!Number.isFinite(a)||!Number.isFinite(b))return ctx.reply("/number 1 100");if(a>b)[a,b]=[b,a];const n=Math.floor(random()*(b-a+1))+a;store.user(ctx);store.action(ctx.from.id,"number");await ctx.reply(`🎯 ${n}`);});bot.command("pick",async ctx=>{const a=String(ctx.match||"").split("|").map(x=>x.trim()).filter(Boolean);if(a.length<2)return ctx.reply("/pick a | b | c");store.user(ctx);store.action(ctx.from.id,"pick");await ctx.reply(`👉 ${a[Math.floor(random()*a.length)]}`);});bot.command("coin",ctx=>ctx.reply(random()<.5?"🪙 Орёл":"🪙 Решка"));bot.command("dice",ctx=>ctx.reply(`🎲 ${Math.floor(random()*6)+1}`));bot.command("shuffle",async ctx=>{const a=String(ctx.match||"").split("|").map(x=>x.trim()).filter(Boolean);if(a.length<2)return ctx.reply("/shuffle a | b | c");for(let i=a.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}await ctx.reply(a.map((x,i)=>`${i+1}. ${x}`).join("\n"));});return attachBasics(bot,store,{name:"Tectra Random",short:"Рандомайзер, жеребьёвки и выбор победителя.",description:"Случайные числа, выбор из списка, монетка, кубик и перемешивание прямо в Telegram.",commands:[{command:"number",description:"случайное число"},{command:"pick",description:"выбрать вариант"},{command:"coin",description:"монетка"},{command:"dice",description:"кубик"},{command:"shuffle",description:"перемешать"}]});}
 
-function attachBasics(bot, store, profile) {
-  bot.closeStore = () => store.close();
-  bot.syncProfile = async () => {
-    const calls = [
-      bot.api.setMyName(profile.name),
-      bot.api.setMyDescription(profile.description),
-      bot.api.setMyShortDescription(profile.short),
-      bot.api.setMyCommands(profile.commands)
-    ];
-    const results = await Promise.allSettled(calls);
-    const failed = results.filter((r) => r.status === "rejected");
-    if (failed.length) console.error(`${profile.name} profile sync: ${failed.length} failed`);
-  };
-  bot.catch((error) => console.error(`${profile.name} error`, safeErrorSummary(error)));
-  return bot;
-}
+export function createDatingBot(token,dbPath,random=Math.random){const store=new NicheStore(dbPath,`CREATE TABLE IF NOT EXISTS dating_profiles(user_id INTEGER PRIMARY KEY,age INTEGER NOT NULL,city TEXT NOT NULL,interests TEXT NOT NULL,bio TEXT NOT NULL DEFAULT '',active INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS dating_likes(user_id INTEGER NOT NULL,target_id INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(user_id,target_id));`);const bot=new Bot(token);const help="💞 Tectra Meet 18+\n/profile 26 | Москва | кино, прогулки | о себе\n/find — анкеты\n/like ID — симпатия\n/pause — скрыться";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.command("profile",async ctx=>{const p=String(ctx.match||"").split("|").map(x=>x.trim());const age=Number(p[0]);if(!Number.isInteger(age)||age<18||age>80||!p[1]||!p[2])return ctx.reply("/profile 26 | Москва | кино, прогулки | о себе");store.user(ctx);store.db.prepare(`INSERT INTO dating_profiles(user_id,age,city,interests,bio,active) VALUES(?,?,?,?,?,1) ON CONFLICT(user_id) DO UPDATE SET age=excluded.age,city=excluded.city,interests=excluded.interests,bio=excluded.bio,active=1,updated_at=CURRENT_TIMESTAMP`).run(ctx.from.id,age,p[1].slice(0,80),p[2].slice(0,300),(p[3]||"").slice(0,500));store.action(ctx.from.id,"profile_save");await ctx.reply("✅ Анкета сохранена. /find");});bot.command("pause",async ctx=>{store.db.prepare("UPDATE dating_profiles SET active=0 WHERE user_id=?").run(ctx.from.id);await ctx.reply("Анкета скрыта.");});bot.command("find",async ctx=>{const me=store.db.prepare("SELECT * FROM dating_profiles WHERE user_id=? AND active=1").get(ctx.from.id);if(!me)return ctx.reply("Сначала /profile");const list=store.db.prepare("SELECT p.*,u.username FROM dating_profiles p LEFT JOIN niche_users u ON u.id=p.user_id WHERE p.active=1 AND p.user_id<>? AND lower(p.city)=lower(?) LIMIT 100").all(ctx.from.id,me.city);if(!list.length)return ctx.reply("Пока никого рядом.");const p=list[Math.floor(random()*list.length)];store.action(ctx.from.id,"profile_view",{target:Number(p.user_id)});await ctx.reply(`💞 #${p.user_id}\n${p.age} · ${p.city}\n${p.interests}\n${p.bio}\n\n/like ${p.user_id}`);});bot.command("like",async ctx=>{const id=Number(ctx.match);if(!Number.isInteger(id)||id===ctx.from.id)return ctx.reply("/like ID");const target=store.db.prepare("SELECT 1 FROM dating_profiles WHERE user_id=? AND active=1").get(id);if(!target)return ctx.reply("Анкета не найдена.");store.db.prepare("INSERT OR IGNORE INTO dating_likes(user_id,target_id) VALUES(?,?)").run(ctx.from.id,id);const mutual=store.db.prepare("SELECT 1 FROM dating_likes WHERE user_id=? AND target_id=?").get(id,ctx.from.id);if(mutual){const u=store.db.prepare("SELECT username FROM niche_users WHERE id=?").get(id);await ctx.reply(`💚 Взаимно! ${u?.username?`@${u.username}`:`ID ${id}`}`);}else await ctx.reply("💚 Симпатия сохранена.");});return attachBasics(bot,store,{name:"Tectra Meet",short:"Знакомства по городу и интересам. Только 18+.",description:"Анкеты, поиск людей по городу и интересам и раскрытие контакта только при взаимной симпатии. 18+.",commands:[{command:"profile",description:"создать анкету"},{command:"find",description:"найти людей"},{command:"like",description:"симпатия"},{command:"pause",description:"скрыть анкету"}]});}
 
-export function createStudyBot(token, dbPath, random = Math.random) {
-  const store = new NicheStore(dbPath, `
-    CREATE TABLE IF NOT EXISTS flashcards (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      front TEXT NOT NULL,
-      back TEXT NOT NULL,
-      score INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_flashcards_user ON flashcards(user_id);
-  `);
-  const bot = new Bot(token);
-  bot.use(session({ initial: () => ({ cardId: null }) }));
-  const help = "📚 Study Cards\n\n/add вопрос | ответ — добавить карточку\n/quiz — повторить случайную карточку\n/cards — сколько карточек сохранено\n/del ID — удалить карточку";
-  bot.command("start", trackedStart(store, (ctx) => ctx.reply(help)));
-  bot.command("help", (ctx) => ctx.reply(help));
-  bot.command("add", async (ctx) => {
-    store.user(ctx);
-    const [front, back] = String(ctx.match || "").split("|").map((x) => x.trim());
-    if (!front || !back) return ctx.reply("Формат: /add вопрос | ответ");
-    const r = store.db.prepare("INSERT INTO flashcards(user_id,front,back) VALUES(?,?,?)").run(ctx.from.id, front.slice(0,800), back.slice(0,1200));
-    store.action(ctx.from.id, "card_add");
-    await ctx.reply(`✅ Карточка #${r.lastInsertRowid} сохранена.`);
-  });
-  bot.command("cards", async (ctx) => {
-    store.user(ctx);
-    const count = store.db.prepare("SELECT COUNT(*) count FROM flashcards WHERE user_id=?").get(ctx.from.id).count;
-    await ctx.reply(`Карточек: ${count}`);
-  });
-  bot.command("del", async (ctx) => {
-    const id = Number(ctx.match);
-    if (!Number.isInteger(id)) return ctx.reply("Формат: /del 12");
-    const r = store.db.prepare("DELETE FROM flashcards WHERE id=? AND user_id=?").run(id, ctx.from.id);
-    await ctx.reply(r.changes ? "Удалено." : "Карточка не найдена.");
-  });
-  bot.command("quiz", async (ctx) => {
-    store.user(ctx);
-    const cards = store.db.prepare("SELECT id,front,back,score FROM flashcards WHERE user_id=? ORDER BY score ASC, id ASC").all(ctx.from.id);
-    if (!cards.length) return ctx.reply("Сначала добавьте карточки: /add вопрос | ответ");
-    const pool = cards.slice(0, Math.min(cards.length, 12));
-    const card = pool[Math.floor(random() * pool.length)];
-    ctx.session.cardId = Number(card.id);
-    await ctx.reply(`❓ ${card.front}`, { reply_markup: new InlineKeyboard().text("Показать ответ", `study:show:${card.id}`) });
-  });
-  bot.callbackQuery(/^study:show:(\d+)$/, async (ctx) => {
-    const id = Number(ctx.match[1]);
-    const card = store.db.prepare("SELECT id,front,back FROM flashcards WHERE id=? AND user_id=?").get(id, ctx.from.id);
-    if (!card) return ctx.answerCallbackQuery("Карточка уже удалена");
-    await ctx.answerCallbackQuery();
-    await ctx.editMessageText(`❓ ${card.front}\n\n✅ ${card.back}`, { reply_markup: new InlineKeyboard().text("Знал", `study:rate:${id}:1`).text("Не знал", `study:rate:${id}:-1`) });
-  });
-  bot.callbackQuery(/^study:rate:(\d+):(-?1)$/, async (ctx) => {
-    const id = Number(ctx.match[1]); const delta = Number(ctx.match[2]);
-    store.db.prepare("UPDATE flashcards SET score=MAX(-5,MIN(20,score+?)) WHERE id=? AND user_id=?").run(delta, id, ctx.from.id);
-    store.action(ctx.from.id, "card_review", { known: delta > 0 });
-    await ctx.answerCallbackQuery(delta > 0 ? "Запомнено" : "Вернём чаще");
-    await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard().text("Следующая: /quiz", "study:next") });
-  });
-  bot.callbackQuery("study:next", async (ctx) => { await ctx.answerCallbackQuery(); await ctx.reply("Следующая карточка: /quiz"); });
-  return attachBasics(bot, store, {
-    name: "Tectra Study Cards",
-    short: "Карточки и интервальное повторение прямо в Telegram.",
-    description: "Создавайте свои flashcards, повторяйте слабые карточки чаще и учитесь без отдельного приложения.",
-    commands: [{command:"add",description:"добавить карточку"},{command:"quiz",description:"повторение"},{command:"cards",description:"мои карточки"},{command:"help",description:"помощь"}]
-  });
-}
+export function createRatesBot(token,dbPath){const store=new NicheStore(dbPath,`CREATE TABLE IF NOT EXISTS mod_chats(chat_id INTEGER PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,links INTEGER NOT NULL DEFAULT 1,flood INTEGER NOT NULL DEFAULT 1,updated_by INTEGER,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`);const bot=new Bot(token);const flood=new Map();async function isAdmin(ctx,userId=ctx.from?.id){if(!ctx.chat||ctx.chat.type==="private")return false;try{const m=await ctx.api.getChatMember(ctx.chat.id,userId);return["creator","administrator"].includes(m.status);}catch{return false;}}const help="🛡 Tectra Moderator\nДобавьте бота администратором с правом удаления сообщений.\n/protect_on — защита ссылок и флуда\n/protect_off — выключить\n/status — статус";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.command("protect_on",async ctx=>{if(!(await isAdmin(ctx)))return ctx.reply("Только администратор группы.");store.db.prepare("INSERT INTO mod_chats(chat_id,enabled,updated_by) VALUES(?,1,?) ON CONFLICT(chat_id) DO UPDATE SET enabled=1,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP").run(ctx.chat.id,ctx.from.id);await ctx.reply("✅ Защита включена: ссылки от обычных участников и явный флуд будут удаляться.");});bot.command("protect_off",async ctx=>{if(!(await isAdmin(ctx)))return;store.db.prepare("INSERT INTO mod_chats(chat_id,enabled,updated_by) VALUES(?,0,?) ON CONFLICT(chat_id) DO UPDATE SET enabled=0,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP").run(ctx.chat.id,ctx.from.id);await ctx.reply("Защита выключена.");});bot.command("status",async ctx=>{const r=store.db.prepare("SELECT enabled FROM mod_chats WHERE chat_id=?").get(ctx.chat.id);await ctx.reply(r?.enabled?"🟢 Защита включена":"⚪ Защита выключена");});bot.on("message",async ctx=>{if(ctx.chat.type==="private"||!ctx.from)return;const r=store.db.prepare("SELECT enabled FROM mod_chats WHERE chat_id=?").get(ctx.chat.id);if(!r?.enabled||await isAdmin(ctx))return;const text=ctx.message.text||ctx.message.caption||"";const now=Date.now(),key=`${ctx.chat.id}:${ctx.from.id}`;const arr=(flood.get(key)||[]).filter(t=>now-t<10000);arr.push(now);flood.set(key,arr);const badLink=/(https?:\/\/|t\.me\/|www\.)/i.test(text);const badFlood=arr.length>5;if(badLink||badFlood){try{await ctx.deleteMessage();store.action(ctx.from.id,badLink?"link_removed":"flood_removed",{chat:ctx.chat.id});}catch{}}});return attachBasics(bot,store,{name:"Tectra Moderator",short:"Антиспам, антифлуд и защита Telegram-групп.",description:"Модератор для Telegram-групп: удаляет нежелательные ссылки и явный флуд, управляется командами администраторов.",commands:[{command:"protect_on",description:"включить защиту"},{command:"protect_off",description:"выключить"},{command:"status",description:"статус"}]});}
 
-export function createRandomBot(token, dbPath, random = Math.random) {
-  const store = new NicheStore(dbPath);
-  const bot = new Bot(token);
-  const help = "🎲 Tectra Random\n\n/number 1 100 — случайное число\n/pick пицца | суши | бургер — выбрать вариант\n/coin — монетка\n/dice — кубик\n/shuffle a | b | c — перемешать список";
-  bot.command("start", trackedStart(store, (ctx) => ctx.reply(help)));
-  bot.command("help", (ctx) => ctx.reply(help));
-  bot.command("number", async (ctx) => {
-    const parts = String(ctx.match||"").trim().split(/\s+/).map(Number); let [a,b] = parts;
-    if (!Number.isFinite(a) || !Number.isFinite(b)) return ctx.reply("Формат: /number 1 100");
-    if (a > b) [a,b]=[b,a]; if (b-a > 1_000_000_000) return ctx.reply("Слишком большой диапазон.");
-    const n = Math.floor(random()*(b-a+1))+a; store.user(ctx); store.action(ctx.from.id,"number"); await ctx.reply(`🎯 ${n}`);
-  });
-  bot.command("pick", async (ctx) => {
-    const items=String(ctx.match||"").split("|").map(x=>x.trim()).filter(Boolean);
-    if(items.length<2) return ctx.reply("Формат: /pick вариант 1 | вариант 2 | вариант 3");
-    store.user(ctx); store.action(ctx.from.id,"pick",{count:items.length}); await ctx.reply(`👉 ${items[Math.floor(random()*items.length)]}`);
-  });
-  bot.command("coin", async (ctx)=>{store.user(ctx);store.action(ctx.from.id,"coin");await ctx.reply(random()<.5?"🪙 Орёл":"🪙 Решка");});
-  bot.command("dice", async (ctx)=>{store.user(ctx);store.action(ctx.from.id,"dice");await ctx.reply(`🎲 ${Math.floor(random()*6)+1}`);});
-  bot.command("shuffle", async (ctx)=>{const a=String(ctx.match||"").split("|").map(x=>x.trim()).filter(Boolean);if(a.length<2)return ctx.reply("Формат: /shuffle a | b | c");for(let i=a.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}store.user(ctx);store.action(ctx.from.id,"shuffle");await ctx.reply(a.map((x,i)=>`${i+1}. ${x}`).join("\n"));});
-  return attachBasics(bot, store, {name:"Tectra Random",short:"Рандомайзер, выбор победителя и быстрые жеребьёвки.",description:"Случайные числа, выбор из списка, монетка, кубик и перемешивание — без регистрации и лишних экранов.",commands:[{command:"number",description:"случайное число"},{command:"pick",description:"выбрать вариант"},{command:"coin",description:"монетка"},{command:"dice",description:"кубик"},{command:"shuffle",description:"перемешать список"}]});
-}
+export function createPostBot(token,dbPath){const store=new NicheStore(dbPath);const bot=new Bot(token);const help="📝 Tectra Post\n/format текст — подготовить пост\n/link Текст | https://site.ru — ссылка\n/publish @channel текст — опубликовать в свой канал";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.command("format",async ctx=>{let t=String(ctx.match||"").replace(/\r/g,"").replace(/\n{3,}/g,"\n\n").trim();if(!t)return ctx.reply("/format текст");await ctx.reply(t.slice(0,4096));});bot.command("link",async ctx=>{const[label,url]=String(ctx.match||"").split("|").map(x=>x.trim());if(!label||!/^https?:\/\//i.test(url||""))return ctx.reply("/link Текст | https://site.ru");const e=s=>s.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"','&quot;');await ctx.reply(`<a href="${e(url)}">${e(label)}</a>`,{parse_mode:"HTML"});});bot.command("publish",async ctx=>{const m=String(ctx.match||"").match(/^(@[A-Za-z0-9_]{5,})\s+([\s\S]+)$/);if(!m)return ctx.reply("/publish @channel текст");try{await bot.api.sendMessage(m[1],m[2].slice(0,4096));store.user(ctx);store.action(ctx.from.id,"publish",{channel:m[1]});await ctx.reply("✅ Опубликовано.");}catch{await ctx.reply("Добавьте бота администратором канала с правом публикации.");}});return attachBasics(bot,store,{name:"Tectra Post Bot",short:"Подготовка и публикация постов в Telegram-каналы.",description:"Быстро форматирует текст и публикует посты в ваши Telegram-каналы, где бот назначен администратором.",commands:[{command:"format",description:"подготовить пост"},{command:"link",description:"сделать ссылку"},{command:"publish",description:"опубликовать"}]});}
 
-export function createDatingBot(token, dbPath, random = Math.random) {
-  const store = new NicheStore(dbPath, `
-    CREATE TABLE IF NOT EXISTS dating_profiles(user_id INTEGER PRIMARY KEY, age INTEGER NOT NULL, city TEXT NOT NULL, interests TEXT NOT NULL, bio TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS dating_likes(user_id INTEGER NOT NULL, target_id INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id,target_id));
-  `);
-  const bot = new Bot(token);
-  const help="💞 Tectra Meet 18+\n\n/profile 26 | Москва | кино, игры, прогулки | коротко о себе\n/find — новая анкета\n/like ID — отметить симпатию\n/pause — скрыть анкету\n\nТолько 18+. Не отправляйте адрес, документы и платёжные данные незнакомым людям.";
-  bot.command("start", trackedStart(store,(ctx)=>ctx.reply(help)));
-  bot.command("help",ctx=>ctx.reply(help));
-  bot.command("profile",async ctx=>{const p=String(ctx.match||"").split("|").map(x=>x.trim());const age=Number(p[0]);if(!Number.isInteger(age)||age<18||age>80||!p[1]||!p[2])return ctx.reply("Формат: /profile 26 | Москва | кино, игры | о себе\nТолько 18+.");store.user(ctx);store.db.prepare(`INSERT INTO dating_profiles(user_id,age,city,interests,bio,active) VALUES(?,?,?,?,?,1) ON CONFLICT(user_id) DO UPDATE SET age=excluded.age,city=excluded.city,interests=excluded.interests,bio=excluded.bio,active=1,updated_at=CURRENT_TIMESTAMP`).run(ctx.from.id,age,p[1].slice(0,80),p[2].slice(0,300),(p[3]||"").slice(0,500));store.action(ctx.from.id,"profile_save");await ctx.reply("✅ Анкета сохранена. /find — искать людей.");});
-  bot.command("pause",async ctx=>{store.db.prepare("UPDATE dating_profiles SET active=0 WHERE user_id=?").run(ctx.from.id);await ctx.reply("Анкета скрыта. /profile снова активирует её.");});
-  bot.command("find",async ctx=>{const me=store.db.prepare("SELECT * FROM dating_profiles WHERE user_id=? AND active=1").get(ctx.from.id);if(!me)return ctx.reply("Сначала создайте анкету через /profile.");const list=store.db.prepare("SELECT p.*,u.username FROM dating_profiles p LEFT JOIN niche_users u ON u.id=p.user_id WHERE p.active=1 AND p.user_id<>? AND lower(p.city)=lower(?) LIMIT 100").all(ctx.from.id,me.city);if(!list.length)return ctx.reply("Пока никого в вашем городе. Попробуйте позже или укажите более крупный город.");const p=list[Math.floor(random()*list.length)];store.action(ctx.from.id,"profile_view",{target:Number(p.user_id)});await ctx.reply(`💞 Анкета #${p.user_id}\n${p.age} лет · ${p.city}\nИнтересы: ${p.interests}\n${p.bio||""}\n\n/like ${p.user_id}\nКонтакт откроется только при взаимной симпатии.`);});
-  bot.command("like",async ctx=>{const id=Number(ctx.match);if(!Number.isInteger(id)||id===ctx.from.id)return ctx.reply("Формат: /like ID");const target=store.db.prepare("SELECT user_id FROM dating_profiles WHERE user_id=? AND active=1").get(id);if(!target)return ctx.reply("Анкета не найдена.");store.db.prepare("INSERT OR IGNORE INTO dating_likes(user_id,target_id) VALUES(?,?)").run(ctx.from.id,id);const mutual=store.db.prepare("SELECT 1 FROM dating_likes WHERE user_id=? AND target_id=?").get(id,ctx.from.id);store.action(ctx.from.id,"like",{target:id,mutual:Boolean(mutual)});if(mutual){const u=store.db.prepare("SELECT username FROM niche_users WHERE id=?").get(id);await ctx.reply(`💚 Взаимная симпатия! ${u?.username?`@${u.username}`:`ID ${id}`}`);}else await ctx.reply("💚 Симпатия сохранена. При взаимности сообщу контакт.");});
-  return attachBasics(bot,store,{name:"Tectra Meet",short:"Знакомства по городу и интересам. Только для 18+.",description:"Создайте короткую анкету, находите людей рядом по городу и интересам и открывайте контакт только при взаимной симпатии. Только 18+.",commands:[{command:"profile",description:"создать анкету 18+"},{command:"find",description:"найти анкету"},{command:"like",description:"симпатия по ID"},{command:"pause",description:"скрыть анкету"}]});
-}
+export function createMediaBot(token,dbPath){const store=new NicheStore(dbPath);const bot=new Bot(token);const help="📥 Tectra Video\n/video публичная_ссылка — скачать видео с поддерживаемой публичной платформы\n\nБез DRM, приватных аккаунтов и обхода авторизации. До 45 МБ.";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.command("video",async ctx=>{const u=String(ctx.match||"").trim();if(!/^https?:\/\//i.test(u))return ctx.reply("/video https://...");await ctx.reply("📥 Загружаю видео…");let d;try{d=await downloadWithYtDlp(u,["-f","best[ext=mp4][filesize<45M]/best[filesize<45M]/worst"]);store.user(ctx);store.action(ctx.from.id,"video",{host:new URL(u).hostname});if(path.extname(d.file).toLowerCase()===".mp4")await ctx.replyWithVideo(new InputFile(d.file));else await ctx.replyWithDocument(new InputFile(d.file));}catch{await ctx.reply("Не удалось скачать это видео. Попробуйте другую публичную ссылку.");}finally{if(d)cleanupDownload(d);}});return attachBasics(bot,store,{name:"Tectra Video Saver",short:"Скачивание видео из публичных ссылок прямо в Telegram.",description:"Скачивает видео с поддерживаемых публичных платформ и возвращает файл в Telegram. Без DRM и приватного доступа.",commands:[{command:"video",description:"скачать видео"},{command:"help",description:"помощь"}]});}
 
-let ratesCache={at:0,data:null};
-async function fiatRates(){if(ratesCache.data&&Date.now()-ratesCache.at<30*60_000)return ratesCache.data;const r=await fetch("https://open.er-api.com/v6/latest/USD",{signal:AbortSignal.timeout(7000)});if(!r.ok)throw new Error(`rates HTTP ${r.status}`);const j=await r.json();if(j.result!=="success")throw new Error("rates API failed");ratesCache={at:Date.now(),data:j.rates};return j.rates;}
-export function createRatesBot(token,dbPath){const store=new NicheStore(dbPath);const bot=new Bot(token);const help="💱 Tectra Rates\n\n/rate 100 USD EUR — конвертация валют\n/rate 100 USD PLN\n/crypto btc — текущая цена BTC в USD/EUR\n\nКурсы справочные, не инвестиционная рекомендация.";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.command("rate",async ctx=>{try{const [amountRaw,fromRaw,toRaw]=String(ctx.match||"").trim().split(/\s+/);const amount=Number(String(amountRaw).replace(",","."));const from=(fromRaw||"").toUpperCase(),to=(toRaw||"").toUpperCase();if(!Number.isFinite(amount)||!from||!to)return ctx.reply("Формат: /rate 100 USD EUR");const rates=await fiatRates();if(!rates[from]||!rates[to])return ctx.reply("Эта валюта сейчас не поддерживается источником курса.");const usd=amount/rates[from],value=usd*rates[to];store.user(ctx);store.action(ctx.from.id,"rate",{from,to});await ctx.reply(`${amount.toLocaleString("ru-RU")} ${from} ≈ ${value.toLocaleString("ru-RU",{maximumFractionDigits:4})} ${to}\n\nИсточник: open.er-api.com`);}catch(e){await ctx.reply("Источник курсов временно недоступен. Попробуйте позже.");}});bot.command("crypto",async ctx=>{const q=String(ctx.match||"btc").trim().toLowerCase();const map={btc:"bitcoin",eth:"ethereum",ton:"the-open-network",sol:"solana"};const id=map[q]||q;try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(id)}&vs_currencies=usd,eur`,{signal:AbortSignal.timeout(7000)});const j=await r.json();const v=j[id];if(!v)return ctx.reply("Не нашёл монету. Попробуйте: /crypto btc, eth, ton, sol");store.user(ctx);store.action(ctx.from.id,"crypto",{id});await ctx.reply(`${id}: $${v.usd?.toLocaleString("en-US")} · €${v.eur?.toLocaleString("en-US")}\n\nСправочный курс CoinGecko.`);}catch{await ctx.reply("Источник криптокурсов временно недоступен.");}});return attachBasics(bot,store,{name:"Tectra Rates",short:"Конвертер валют и быстрые курсы криптовалют.",description:"Пересчитывает суммы между валютами и показывает справочные цены популярных криптовалют без регистрации.",commands:[{command:"rate",description:"конвертировать валюту"},{command:"crypto",description:"цена криптовалюты"},{command:"help",description:"помощь"}]});}
+export function createJoinGuardBot(token,dbPath){const store=new NicheStore(dbPath,`CREATE TABLE IF NOT EXISTS join_guard_chats(chat_id INTEGER PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,updated_by INTEGER,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`);const bot=new Bot(token);async function admin(ctx){if(ctx.chat.type==="private")return false;const m=await ctx.getChatMember(ctx.from.id);return["creator","administrator"].includes(m.status);}const help="🛡 Tectra Join Guard\nДобавьте бота администратором.\n/autoapprove_on — включить автоприём заявок\n/autoapprove_off — выключить\n/status — статус";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("autoapprove_on",async ctx=>{if(!(await admin(ctx)))return ctx.reply("Только администратор.");store.db.prepare("INSERT INTO join_guard_chats(chat_id,enabled,updated_by) VALUES(?,1,?) ON CONFLICT(chat_id) DO UPDATE SET enabled=1,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP").run(ctx.chat.id,ctx.from.id);await ctx.reply("✅ Автоприём включён.");});bot.command("autoapprove_off",async ctx=>{if(!(await admin(ctx)))return;store.db.prepare("INSERT INTO join_guard_chats(chat_id,enabled,updated_by) VALUES(?,0,?) ON CONFLICT(chat_id) DO UPDATE SET enabled=0,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP").run(ctx.chat.id,ctx.from.id);await ctx.reply("Выключено.");});bot.command("status",async ctx=>{const r=store.db.prepare("SELECT enabled FROM join_guard_chats WHERE chat_id=?").get(ctx.chat.id);await ctx.reply(r?.enabled?"🟢 Включён":"⚪ Выключен");});bot.on("chat_join_request",async ctx=>{const r=store.db.prepare("SELECT enabled FROM join_guard_chats WHERE chat_id=?").get(ctx.chat.id);if(!r?.enabled)return;try{await bot.api.approveChatJoinRequest(ctx.chat.id,ctx.chatJoinRequest.from.id);store.action(ctx.chatJoinRequest.from.id,"join_approved",{chat:ctx.chat.id});}catch(e){console.error("Join Guard approve",safeErrorSummary(e));}});return attachBasics(bot,store,{name:"Tectra Auto Approve",short:"Автоматический приём заявок в Telegram-чаты и каналы.",description:"Автоматически принимает join requests в ваших Telegram-группах и каналах после включения администратором.",commands:[{command:"autoapprove_on",description:"включить"},{command:"autoapprove_off",description:"выключить"},{command:"status",description:"статус"}]});}
 
-export function createPostBot(token,dbPath){const store=new NicheStore(dbPath);const bot=new Bot(token);const help="📝 Tectra Post Studio\n\n/format текст — очистить и подготовить пост\n/link Текст | https://site.ru — HTML-ссылка\n/publish @channel текст — опубликовать, если бот добавлен админом канала\n\nПеред публикацией всегда показывает факт отправки; массовых рассылок нет.";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.command("format",async ctx=>{let text=String(ctx.match||"").replace(/\r/g,"").replace(/\n{3,}/g,"\n\n").split("\n").map(x=>x.trimEnd()).join("\n").trim();if(!text)return ctx.reply("Формат: /format ваш текст");if(text.length>3900)text=text.slice(0,3900)+"…";store.user(ctx);store.action(ctx.from.id,"format");await ctx.reply(`Готовый текст:\n\n${text}`);});bot.command("link",async ctx=>{const [label,url]=String(ctx.match||"").split("|").map(x=>x.trim());if(!label||!/^https?:\/\//i.test(url||""))return ctx.reply("Формат: /link Текст ссылки | https://example.com");const esc=s=>s.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"','&quot;');await ctx.reply(`<a href="${esc(url)}">${esc(label)}</a>`,{parse_mode:"HTML"});});bot.command("publish",async ctx=>{const m=String(ctx.match||"").match(/^(@[A-Za-z0-9_]{5,})\s+([\s\S]+)$/);if(!m)return ctx.reply("Формат: /publish @channel текст поста");try{await bot.api.sendMessage(m[1],m[2].slice(0,4096));store.user(ctx);store.action(ctx.from.id,"publish",{channel:m[1]});await ctx.reply(`✅ Опубликовано в ${m[1]}.`);}catch{await ctx.reply("Не удалось опубликовать. Добавьте этого бота администратором канала с правом публикации.");}});return attachBasics(bot,store,{name:"Tectra Post Studio",short:"Быстро подготовить и опубликовать пост в Telegram-канал.",description:"Чистит текст, помогает со ссылками и публикует посты в ваши каналы, где бот назначен администратором.",commands:[{command:"format",description:"подготовить текст"},{command:"link",description:"сделать ссылку"},{command:"publish",description:"опубликовать в канал"},{command:"help",description:"помощь"}]});}
-
-function safeFileName(url, contentType="application/octet-stream"){try{const u=new URL(url);const base=path.basename(u.pathname)||"media";if(base.includes("."))return base.slice(0,120);}catch{}const ext=contentType.includes("image/")?contentType.split("/")[1]:contentType.includes("video/")?contentType.split("/")[1]:contentType.includes("audio/")?contentType.split("/")[1]:"bin";return `media.${ext.replace(/[^a-z0-9]/gi,"")||"bin"}`;}
-export function createMediaBot(token,dbPath){const store=new NicheStore(dbPath);const bot=new Bot(token);const help="📥 Tectra Media Saver\n\n/save https://... — скачать прямую публичную ссылку на файл/медиа и получить её в Telegram.\n\nЛимит базовой версии: 45 МБ. Не обходит авторизацию, DRM и ограничения приватного контента.";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.command("save",async ctx=>{const raw=String(ctx.match||"").trim();let url;try{url=new URL(raw);if(!["http:","https:"].includes(url.protocol))throw 0;}catch{return ctx.reply("Формат: /save https://example.com/file.mp4");}const tmp=path.join(os.tmpdir(),`tectra-${crypto.randomUUID()}`);try{await ctx.reply("Загружаю…");const r=await fetch(url,{redirect:"follow",signal:AbortSignal.timeout(25000),headers:{"user-agent":"Mozilla/5.0 TectraMediaSaver/1.0"}});if(!r.ok)throw new Error(`HTTP ${r.status}`);const len=Number(r.headers.get("content-length")||0);if(len>45*1024*1024)return ctx.reply("Файл больше 45 МБ.");const type=r.headers.get("content-type")||"application/octet-stream";const buf=Buffer.from(await r.arrayBuffer());if(buf.length>45*1024*1024)return ctx.reply("Файл больше 45 МБ.");fs.writeFileSync(tmp,buf);store.user(ctx);store.action(ctx.from.id,"save",{host:url.hostname,size:buf.length,type});await ctx.replyWithDocument(new InputFile(tmp, safeFileName(url,type)),{caption:`Сохранено · ${(buf.length/1024/1024).toFixed(1)} МБ`});}catch(e){await ctx.reply("Не удалось забрать эту ссылку. Бот поддерживает прямые публичные URL без логина и DRM.");}finally{try{fs.unlinkSync(tmp);}catch{}}});return attachBasics(bot,store,{name:"Tectra Media Saver",short:"Сохраняет прямые публичные ссылки на медиа и файлы в Telegram.",description:"Отправьте прямую публичную ссылку — бот скачает файл и вернёт его в Telegram. Без обхода авторизации, DRM и приватного доступа.",commands:[{command:"save",description:"сохранить файл по URL"},{command:"help",description:"помощь"}]});}
-
-export function createJoinGuardBot(token,dbPath){const store=new NicheStore(dbPath,`CREATE TABLE IF NOT EXISTS join_guard_chats(chat_id INTEGER PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, updated_by INTEGER, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`);const bot=new Bot(token);async function admin(ctx){if(ctx.chat.type==="private")return false;const m=await ctx.getChatMember(ctx.from.id);return ["creator","administrator"].includes(m.status);}const help="🛡 Tectra Join Guard\n\nДобавьте бота администратором группы/канала с правом принимать заявки.\n/autoapprove_on — автоматически принимать заявки\n/autoapprove_off — выключить\n/status — статус для текущего чата";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.command("autoapprove_on",async ctx=>{if(!(await admin(ctx)))return ctx.reply("Команда доступна только администратору группы/канала.");store.db.prepare("INSERT INTO join_guard_chats(chat_id,enabled,updated_by) VALUES(?,1,?) ON CONFLICT(chat_id) DO UPDATE SET enabled=1,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP").run(ctx.chat.id,ctx.from.id);store.user(ctx);store.action(ctx.from.id,"guard_on",{chat:ctx.chat.id});await ctx.reply("✅ Автоприём заявок включён.");});bot.command("autoapprove_off",async ctx=>{if(!(await admin(ctx)))return ctx.reply("Только администратор.");store.db.prepare("INSERT INTO join_guard_chats(chat_id,enabled,updated_by) VALUES(?,0,?) ON CONFLICT(chat_id) DO UPDATE SET enabled=0,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP").run(ctx.chat.id,ctx.from.id);await ctx.reply("Автоприём выключен.");});bot.command("status",async ctx=>{const row=store.db.prepare("SELECT enabled FROM join_guard_chats WHERE chat_id=?").get(ctx.chat.id);await ctx.reply(row?.enabled?"🟢 Автоприём включён":"⚪ Автоприём выключен");});bot.on("chat_join_request",async ctx=>{const row=store.db.prepare("SELECT enabled FROM join_guard_chats WHERE chat_id=?").get(ctx.chat.id);if(!row?.enabled)return;try{await bot.api.approveChatJoinRequest(ctx.chat.id,ctx.chatJoinRequest.from.id);store.action(ctx.chatJoinRequest.from.id,"join_approved",{chat:ctx.chat.id});}catch(e){console.error("Join Guard approve",safeErrorSummary(e));}});return attachBasics(bot,store,{name:"Tectra Join Guard",short:"Автоматически принимает заявки на вступление в ваши Telegram-чаты.",description:"Инструмент для владельцев групп и каналов: автоматический приём join requests с управлением прямо командами в чате.",commands:[{command:"autoapprove_on",description:"включить автоприём"},{command:"autoapprove_off",description:"выключить"},{command:"status",description:"статус"},{command:"help",description:"помощь"}]});}
-
-
-export function createToolsBot(token, dbPath) {
-  const store = new NicheStore(dbPath);
-  const bot = new Bot(token);
-  const help = "🧰 Tectra Tools\n\n/qr текст или ссылка — QR-код\n/password 20 — случайный пароль\n/uuid — UUID\n/hash текст — SHA-256\n/base64 текст — Base64\n/url текст — URL-encoding";
-  bot.command("start", trackedStart(store, (ctx) => ctx.reply(help)));
-  bot.command("help", (ctx) => ctx.reply(help));
-  bot.command("uuid", async (ctx) => {
-    store.user(ctx); store.action(ctx.from.id, "uuid");
-    await ctx.reply(crypto.randomUUID());
-  });
-  bot.command("password", async (ctx) => {
-    let length = Number(ctx.match || 20);
-    if (!Number.isInteger(length)) length = 20;
-    length = Math.max(8, Math.min(64, length));
-    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%_-";
-    const bytes = crypto.randomBytes(length);
-    let value = "";
-    for (let i = 0; i < length; i += 1) value += alphabet[bytes[i] % alphabet.length];
-    store.user(ctx); store.action(ctx.from.id, "password", { length });
-    await ctx.reply(`🔐 ${value}\n\nДлина: ${length}. Для критичных аккаунтов используйте менеджер паролей.`);
-  });
-  bot.command("hash", async (ctx) => {
-    const text = String(ctx.match || "");
-    if (!text) return ctx.reply("Формат: /hash текст");
-    const digest = crypto.createHash("sha256").update(text).digest("hex");
-    store.user(ctx); store.action(ctx.from.id, "hash");
-    await ctx.reply(`SHA-256:\n${digest}`);
-  });
-  bot.command("base64", async (ctx) => {
-    const text = String(ctx.match || "");
-    if (!text) return ctx.reply("Формат: /base64 текст");
-    store.user(ctx); store.action(ctx.from.id, "base64");
-    await ctx.reply(Buffer.from(text, "utf8").toString("base64"));
-  });
-  bot.command("url", async (ctx) => {
-    const text = String(ctx.match || "");
-    if (!text) return ctx.reply("Формат: /url текст");
-    store.user(ctx); store.action(ctx.from.id, "urlencode");
-    await ctx.reply(encodeURIComponent(text));
-  });
-  bot.command("qr", async (ctx) => {
-    const text = String(ctx.match || "").trim();
-    if (!text) return ctx.reply("Формат: /qr текст или https://example.com");
-    if (text.length > 1500) return ctx.reply("Для QR используйте текст до 1500 символов.");
-    const qr = `https://quickchart.io/qr?size=420&text=${encodeURIComponent(text)}`;
-    store.user(ctx); store.action(ctx.from.id, "qr");
-    try { await ctx.replyWithPhoto(qr, { caption: "QR готов." }); }
-    catch { await ctx.reply("Не удалось создать QR. Попробуйте позже."); }
-  });
-  return attachBasics(bot, store, {
-    name: "Tectra Tools",
-    short: "QR, пароли, UUID, SHA-256 и кодирование текста.",
-    description: "Набор быстрых Telegram-утилит: QR-коды, генератор паролей, UUID, SHA-256, Base64 и URL-кодирование.",
-    commands: [
-      { command: "qr", description: "создать QR-код" },
-      { command: "password", description: "сгенерировать пароль" },
-      { command: "uuid", description: "создать UUID" },
-      { command: "hash", description: "SHA-256 текста" },
-      { command: "base64", description: "Base64 текста" },
-      { command: "url", description: "URL-кодирование" }
-    ]
-  });
-}
+export function createToolsBot(token,dbPath){const store=new NicheStore(dbPath,`CREATE TABLE IF NOT EXISTS user_locations(user_id INTEGER PRIMARY KEY,lat REAL NOT NULL,lon REAL NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`);const bot=new Bot(token);const help="📍 Tectra Nearby\n1) Отправьте геолокацию боту\n2) /near cafe — кафе рядом\n/near restaurant\n/near pharmacy\n/near atm\n/near fuel\n/near hotel";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.on("message:location",async ctx=>{const{latitude,longitude}=ctx.message.location;store.user(ctx);store.db.prepare("INSERT INTO user_locations(user_id,lat,lon) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET lat=excluded.lat,lon=excluded.lon,updated_at=CURRENT_TIMESTAMP").run(ctx.from.id,latitude,longitude);await ctx.reply("📍 Геолокация сохранена. Теперь /near cafe или /near pharmacy");});bot.command("near",async ctx=>{const q=String(ctx.match||"cafe").trim().toLowerCase();const map={cafe:["amenity","cafe"],restaurant:["amenity","restaurant"],pharmacy:["amenity","pharmacy"],atm:["amenity","atm"],fuel:["amenity","fuel"],hotel:["tourism","hotel"]};const tag=map[q];if(!tag)return ctx.reply("Категории: cafe, restaurant, pharmacy, atm, fuel, hotel");const loc=store.db.prepare("SELECT lat,lon FROM user_locations WHERE user_id=?").get(ctx.from.id);if(!loc)return ctx.reply("Сначала отправьте геолокацию боту.");const query=`[out:json][timeout:10];(node[\"${tag[0]}\"=\"${tag[1]}\"](around:3000,${loc.lat},${loc.lon});way[\"${tag[0]}\"=\"${tag[1]}\"](around:3000,${loc.lat},${loc.lon}););out center 8;`;try{const r=await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`,{headers:{"user-agent":"TerraTectraNearby/1.0"},signal:AbortSignal.timeout(15000)});if(!r.ok)throw 0;const j=await r.json();const items=j.elements.slice(0,8).map((e,i)=>{const lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon,name=e.tags?.name||e.tags?.brand||`${q} #${i+1}`;return`${i+1}. ${name}\nhttps://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=18/${lat}/${lon}`;});store.action(ctx.from.id,"near",{q});await ctx.reply(items.length?items.join("\n\n"):"В радиусе 3 км ничего не найдено.",{disable_web_page_preview:true});}catch{await ctx.reply("Сервис карты временно недоступен.");}});return attachBasics(bot,store,{name:"Tectra Nearby",short:"Кафе, аптеки, банкоматы и места рядом с вами.",description:"Отправьте геолокацию и находите кафе, рестораны, аптеки, банкоматы, АЗС и отели рядом через OpenStreetMap.",commands:[{command:"near",description:"найти места рядом"},{command:"help",description:"помощь"}]});}
