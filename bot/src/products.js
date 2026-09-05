@@ -50,6 +50,16 @@ export const products = [
     description: "Быстрый пересчёт сумм между валютами и справочные цены популярных криптовалют."
   },
   {
+    id: "hub",
+    category: "utility",
+    name: "Tectra Tools",
+    username: "TerraTectraBotsBot",
+    icon: "🧰",
+    keywords: ["qr", "пароль", "password", "uuid", "sha256", "hash", "base64", "кодирование", "инструменты"],
+    tagline: "QR, пароли, UUID, SHA-256 и кодирование текста",
+    description: "Набор быстрых Telegram-утилит для QR-кодов, паролей, UUID, хешей и кодирования текста."
+  },
+  {
     id: "tasks",
     category: "creator",
     name: "Tectra Post Studio",
@@ -103,6 +113,7 @@ export const recommendationIntents = [
   { id: "download", label: "📥 Сохранить файл", productId: "quiz" },
   { id: "random", label: "🎲 Выбрать случайно", productId: "focus" },
   { id: "rates", label: "💱 Узнать курс", productId: "budget" },
+  { id: "tools", label: "🧰 Быстрые инструменты", productId: "hub" },
   { id: "post", label: "📝 Сделать пост", productId: "tasks" },
   { id: "join", label: "🛡 Принимать заявки", productId: "party" },
   { id: "study", label: "📚 Учить карточки", productId: "english" }

@@ -10,7 +10,8 @@ import {
   createPostBot,
   createRandomBot,
   createRatesBot,
-  createStudyBot
+  createStudyBot,
+  createToolsBot
 } from "../src/niche-bots.js";
 
 const token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
@@ -27,7 +28,8 @@ for (const [name, factory] of Object.entries({
   rates: createRatesBot,
   post: createPostBot,
   media: createMediaBot,
-  join: createJoinGuardBot
+  join: createJoinGuardBot,
+  tools: createToolsBot
 })) {
   test(`niche factory ${name} creates an isolated persistent bot`, () => {
     const { dir, db } = withDb(name);

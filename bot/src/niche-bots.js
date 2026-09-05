@@ -189,3 +189,68 @@ function safeFileName(url, contentType="application/octet-stream"){try{const u=n
 export function createMediaBot(token,dbPath){const store=new NicheStore(dbPath);const bot=new Bot(token);const help="📥 Tectra Media Saver\n\n/save https://... — скачать прямую публичную ссылку на файл/медиа и получить её в Telegram.\n\nЛимит базовой версии: 45 МБ. Не обходит авторизацию, DRM и ограничения приватного контента.";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.command("save",async ctx=>{const raw=String(ctx.match||"").trim();let url;try{url=new URL(raw);if(!["http:","https:"].includes(url.protocol))throw 0;}catch{return ctx.reply("Формат: /save https://example.com/file.mp4");}const tmp=path.join(os.tmpdir(),`tectra-${crypto.randomUUID()}`);try{await ctx.reply("Загружаю…");const r=await fetch(url,{redirect:"follow",signal:AbortSignal.timeout(25000),headers:{"user-agent":"Mozilla/5.0 TectraMediaSaver/1.0"}});if(!r.ok)throw new Error(`HTTP ${r.status}`);const len=Number(r.headers.get("content-length")||0);if(len>45*1024*1024)return ctx.reply("Файл больше 45 МБ.");const type=r.headers.get("content-type")||"application/octet-stream";const buf=Buffer.from(await r.arrayBuffer());if(buf.length>45*1024*1024)return ctx.reply("Файл больше 45 МБ.");fs.writeFileSync(tmp,buf);store.user(ctx);store.action(ctx.from.id,"save",{host:url.hostname,size:buf.length,type});await ctx.replyWithDocument(new InputFile(tmp, safeFileName(url,type)),{caption:`Сохранено · ${(buf.length/1024/1024).toFixed(1)} МБ`});}catch(e){await ctx.reply("Не удалось забрать эту ссылку. Бот поддерживает прямые публичные URL без логина и DRM.");}finally{try{fs.unlinkSync(tmp);}catch{}}});return attachBasics(bot,store,{name:"Tectra Media Saver",short:"Сохраняет прямые публичные ссылки на медиа и файлы в Telegram.",description:"Отправьте прямую публичную ссылку — бот скачает файл и вернёт его в Telegram. Без обхода авторизации, DRM и приватного доступа.",commands:[{command:"save",description:"сохранить файл по URL"},{command:"help",description:"помощь"}]});}
 
 export function createJoinGuardBot(token,dbPath){const store=new NicheStore(dbPath,`CREATE TABLE IF NOT EXISTS join_guard_chats(chat_id INTEGER PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, updated_by INTEGER, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`);const bot=new Bot(token);async function admin(ctx){if(ctx.chat.type==="private")return false;const m=await ctx.getChatMember(ctx.from.id);return ["creator","administrator"].includes(m.status);}const help="🛡 Tectra Join Guard\n\nДобавьте бота администратором группы/канала с правом принимать заявки.\n/autoapprove_on — автоматически принимать заявки\n/autoapprove_off — выключить\n/status — статус для текущего чата";bot.command("start",trackedStart(store,ctx=>ctx.reply(help)));bot.command("help",ctx=>ctx.reply(help));bot.command("autoapprove_on",async ctx=>{if(!(await admin(ctx)))return ctx.reply("Команда доступна только администратору группы/канала.");store.db.prepare("INSERT INTO join_guard_chats(chat_id,enabled,updated_by) VALUES(?,1,?) ON CONFLICT(chat_id) DO UPDATE SET enabled=1,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP").run(ctx.chat.id,ctx.from.id);store.user(ctx);store.action(ctx.from.id,"guard_on",{chat:ctx.chat.id});await ctx.reply("✅ Автоприём заявок включён.");});bot.command("autoapprove_off",async ctx=>{if(!(await admin(ctx)))return ctx.reply("Только администратор.");store.db.prepare("INSERT INTO join_guard_chats(chat_id,enabled,updated_by) VALUES(?,0,?) ON CONFLICT(chat_id) DO UPDATE SET enabled=0,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP").run(ctx.chat.id,ctx.from.id);await ctx.reply("Автоприём выключен.");});bot.command("status",async ctx=>{const row=store.db.prepare("SELECT enabled FROM join_guard_chats WHERE chat_id=?").get(ctx.chat.id);await ctx.reply(row?.enabled?"🟢 Автоприём включён":"⚪ Автоприём выключен");});bot.on("chat_join_request",async ctx=>{const row=store.db.prepare("SELECT enabled FROM join_guard_chats WHERE chat_id=?").get(ctx.chat.id);if(!row?.enabled)return;try{await bot.api.approveChatJoinRequest(ctx.chat.id,ctx.chatJoinRequest.from.id);store.action(ctx.chatJoinRequest.from.id,"join_approved",{chat:ctx.chat.id});}catch(e){console.error("Join Guard approve",safeErrorSummary(e));}});return attachBasics(bot,store,{name:"Tectra Join Guard",short:"Автоматически принимает заявки на вступление в ваши Telegram-чаты.",description:"Инструмент для владельцев групп и каналов: автоматический приём join requests с управлением прямо командами в чате.",commands:[{command:"autoapprove_on",description:"включить автоприём"},{command:"autoapprove_off",description:"выключить"},{command:"status",description:"статус"},{command:"help",description:"помощь"}]});}
+
+
+export function createToolsBot(token, dbPath) {
+  const store = new NicheStore(dbPath);
+  const bot = new Bot(token);
+  const help = "🧰 Tectra Tools\n\n/qr текст или ссылка — QR-код\n/password 20 — случайный пароль\n/uuid — UUID\n/hash текст — SHA-256\n/base64 текст — Base64\n/url текст — URL-encoding";
+  bot.command("start", trackedStart(store, (ctx) => ctx.reply(help)));
+  bot.command("help", (ctx) => ctx.reply(help));
+  bot.command("uuid", async (ctx) => {
+    store.user(ctx); store.action(ctx.from.id, "uuid");
+    await ctx.reply(crypto.randomUUID());
+  });
+  bot.command("password", async (ctx) => {
+    let length = Number(ctx.match || 20);
+    if (!Number.isInteger(length)) length = 20;
+    length = Math.max(8, Math.min(64, length));
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%_-";
+    const bytes = crypto.randomBytes(length);
+    let value = "";
+    for (let i = 0; i < length; i += 1) value += alphabet[bytes[i] % alphabet.length];
+    store.user(ctx); store.action(ctx.from.id, "password", { length });
+    await ctx.reply(`🔐 ${value}\n\nДлина: ${length}. Для критичных аккаунтов используйте менеджер паролей.`);
+  });
+  bot.command("hash", async (ctx) => {
+    const text = String(ctx.match || "");
+    if (!text) return ctx.reply("Формат: /hash текст");
+    const digest = crypto.createHash("sha256").update(text).digest("hex");
+    store.user(ctx); store.action(ctx.from.id, "hash");
+    await ctx.reply(`SHA-256:\n${digest}`);
+  });
+  bot.command("base64", async (ctx) => {
+    const text = String(ctx.match || "");
+    if (!text) return ctx.reply("Формат: /base64 текст");
+    store.user(ctx); store.action(ctx.from.id, "base64");
+    await ctx.reply(Buffer.from(text, "utf8").toString("base64"));
+  });
+  bot.command("url", async (ctx) => {
+    const text = String(ctx.match || "");
+    if (!text) return ctx.reply("Формат: /url текст");
+    store.user(ctx); store.action(ctx.from.id, "urlencode");
+    await ctx.reply(encodeURIComponent(text));
+  });
+  bot.command("qr", async (ctx) => {
+    const text = String(ctx.match || "").trim();
+    if (!text) return ctx.reply("Формат: /qr текст или https://example.com");
+    if (text.length > 1500) return ctx.reply("Для QR используйте текст до 1500 символов.");
+    const qr = `https://quickchart.io/qr?size=420&text=${encodeURIComponent(text)}`;
+    store.user(ctx); store.action(ctx.from.id, "qr");
+    try { await ctx.replyWithPhoto(qr, { caption: "QR готов." }); }
+    catch { await ctx.reply("Не удалось создать QR. Попробуйте позже."); }
+  });
+  return attachBasics(bot, store, {
+    name: "Tectra Tools",
+    short: "QR, пароли, UUID, SHA-256 и кодирование текста.",
+    description: "Набор быстрых Telegram-утилит: QR-коды, генератор паролей, UUID, SHA-256, Base64 и URL-кодирование.",
+    commands: [
+      { command: "qr", description: "создать QR-код" },
+      { command: "password", description: "сгенерировать пароль" },
+      { command: "uuid", description: "создать UUID" },
+      { command: "hash", description: "SHA-256 текста" },
+      { command: "base64", description: "Base64 текста" },
+      { command: "url", description: "URL-кодирование" }
+    ]
+  });
+}

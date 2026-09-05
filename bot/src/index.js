@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { createAdminBot } from "./admin-bot.js";
 import { ChannelPublisher } from "./channel-publisher.js";
-import { createHubBot } from "./hub-bot.js";
 import {
   createDatingBot,
   createJoinGuardBot,
@@ -11,7 +10,8 @@ import {
   createPostBot,
   createRandomBot,
   createRatesBot,
-  createStudyBot
+  createStudyBot,
+  createToolsBot
 } from "./niche-bots.js";
 import { createUserBot } from "./user-bot.js";
 import { isTelegramPollingConflict, safeErrorSummary } from "./safe-error.js";
@@ -91,7 +91,7 @@ const englishBot = englishToken ? createStudyBot(englishToken, englishDbPath) : 
 const focusBot = focusToken ? createRandomBot(focusToken, focusDbPath) : null;
 const gameBot = gameToken ? createDatingBot(gameToken, gameDbPath) : null;
 const budgetBot = budgetToken ? createRatesBot(budgetToken, budgetDbPath) : null;
-const hubBot = hubToken ? createHubBot(hubToken, hubDbPath) : null;
+const hubBot = hubToken ? createToolsBot(hubToken, hubDbPath) : null;
 const taskBot = taskToken ? createPostBot(taskToken, taskDbPath) : null;
 const quizBot = quizToken ? createMediaBot(quizToken, quizDbPath) : null;
 adminBot.startDailyReportScheduler();
@@ -158,6 +158,7 @@ function shutdown(status = "stopped", details = {}) {
     safely(() => focusBot?.closeStore?.());
     safely(() => gameBot?.closeStore?.());
     safely(() => budgetBot?.closeStore?.());
+    safely(() => hubBot?.closeStore?.());
     safely(() => taskBot?.closeStore?.());
     safely(() => quizBot?.closeStore?.());
     safely(() => partyBot?.closeStore?.());
@@ -171,7 +172,7 @@ function shutdown(status = "stopped", details = {}) {
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
 
-const publicNicheBots = [englishBot, focusBot, gameBot, budgetBot, taskBot, quizBot, partyBot].filter(Boolean);
+const publicNicheBots = [englishBot, focusBot, gameBot, budgetBot, hubBot, taskBot, quizBot, partyBot].filter(Boolean);
 await Promise.allSettled(publicNicheBots.map((bot) => bot.syncProfile?.()));
 
 console.log(`Starting ${botCount} bots in long-polling mode`);

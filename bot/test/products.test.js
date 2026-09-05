@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { channelLink, contentChannels, productLink, products, productsByCategory, recommendationIntents, searchProducts } from "../src/products.js";
 
 test("product catalog exposes the rebuilt niche lineup", () => {
-  assert.equal(products.length, 8);
+  assert.equal(products.length, 9);
   assert.equal(new Set(products.map((item) => item.id)).size, products.length);
   assert.equal(new Set(products.map((item) => item.username)).size, products.length);
   assert.equal(products.filter((item) => item.id === "anon").length, 1);
@@ -33,6 +33,5 @@ test("recommendation intents point to existing products", () => {
 test("stale legacy channel automation is paused after the bot lineup rebuild", () => {
   const config = JSON.parse(fs.readFileSync(new URL("../content/channels.json", import.meta.url), "utf8"));
   const channels = Object.fromEntries(config.channels.map((channel) => [channel.id, channel]));
-  assert.equal(channels.ai.enabled, true);
-  for (const id of ["focus", "money", "fun", "quiz"]) assert.equal(channels[id].enabled, false);
+  for (const id of ["ai", "focus", "money", "fun", "quiz"]) assert.equal(channels[id].enabled, false);
 });
