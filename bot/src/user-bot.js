@@ -14,9 +14,14 @@ import {
 const profileReady = (user) => Boolean(user?.gender && user?.age);
 const displayGender = (value) => value === "male" ? "парень" : "девушка";
 
-export function createUserBot(token, dbPath) {
-  const store = new Store(dbPath);
+export function createUserBot(token, dbPath, options = {}) {
+  const store = options.store ?? new Store(dbPath);
   const bot = new Bot(token);
+  // Keep button actions and slash commands routed to exactly the same handler.
+  const registerAction = (label, command, handler) => {
+    bot.hears(label, handler);
+    bot.command(command, handler);
+  };
   bot.use(session({ initial: () => ({ step: null, pendingReportId: null }) }));
 
   bot.use(async (ctx, next) => {
@@ -41,6 +46,11 @@ export function createUserBot(token, dbPath) {
       await ctx.reply("Сначала создадим короткий профиль. Кто вы?", { reply_markup: genderKeyboard });
       return;
     }
+    if (user.partner_id) {
+      const previous = store.disconnect(ctx.from.id);
+      await notifyPartner(ctx, previous, "Собеседник начал новый поиск.");
+    }
+    ctx.session.step = null;
     store.recordEvent(ctx.from.id, "search");
     const result = store.enqueue(ctx.from.id, mode, filter.targetGender, filter.minAge, filter.maxAge);
     if (result.status === "limit") {
@@ -102,23 +112,25 @@ export function createUserBot(token, dbPath) {
     await notifyPartner(ctx, reportedId, "Собеседник завершил чат.");
   });
 
-  bot.hears(labels.random, (ctx) => startSearch(ctx, "random"));
-  bot.hears(labels.filtered, async (ctx) => {
+  registerAction(labels.random, "search", (ctx) => startSearch(ctx, "random"));
+  registerAction(labels.filtered, "filters", async (ctx) => {
     const user = store.getUser(ctx.from.id);
     if (!profileReady(user)) return startSearch(ctx, "filtered");
     ctx.session.step = "filter_gender";
     await ctx.reply(`Кого искать? Осталось фильтрованных совпадений сегодня: ${store.filteredRemaining(ctx.from.id)}.`, { reply_markup: filterGenderKeyboard });
   });
 
-  bot.hears(labels.stop, async (ctx) => {
+  registerAction(labels.stop, "stop", async (ctx) => {
     const user = store.getUser(ctx.from.id);
     const partnerId = store.disconnect(ctx.from.id);
+    ctx.session.step = null;
+    ctx.session.pendingReportId = null;
     const message = partnerId ? "Чат завершён." : user?.state === "searching" ? "Поиск остановлен." : "Вы не участвуете в чате или поиске.";
     await ctx.reply(message, { reply_markup: menuKeyboard });
     await notifyPartner(ctx, partnerId, "Собеседник завершил чат.");
   });
 
-  bot.hears(labels.next, async (ctx) => {
+  registerAction(labels.next, "next", async (ctx) => {
     const user = store.getUser(ctx.from.id);
     const partnerId = store.disconnect(ctx.from.id);
     await notifyPartner(ctx, partnerId, "Собеседник переключился на следующий чат.");
@@ -129,7 +141,7 @@ export function createUserBot(token, dbPath) {
     });
   });
 
-  bot.hears(labels.report, async (ctx) => {
+  registerAction(labels.report, "report", async (ctx) => {
     const user = store.getUser(ctx.from.id);
     if (!user?.partner_id) {
       await ctx.reply("Сейчас нет активного собеседника.", { reply_markup: menuKeyboard });
@@ -139,7 +151,7 @@ export function createUserBot(token, dbPath) {
     await ctx.reply("Жалоба завершит чат и навсегда исключит этого пользователя из вашего поиска.", { reply_markup: confirmReportKeyboard });
   });
 
-  bot.hears(labels.profile, async (ctx) => {
+  registerAction(labels.profile, "profile", async (ctx) => {
     const user = store.getUser(ctx.from.id);
     if (!profileReady(user)) {
       ctx.session.step = "gender";
@@ -184,6 +196,10 @@ export function createUserBot(token, dbPath) {
 
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
+    if (text.startsWith("/")) {
+      await ctx.reply("Неизвестная команда. /search — поиск, /filters — фильтры, /stop — остановить.", { reply_markup: menuKeyboard });
+      return;
+    }
     if (ctx.session.step === "age") {
       const age = Number(text);
       if (!Number.isInteger(age) || age < 12 || age > 99) {
