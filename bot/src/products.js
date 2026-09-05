@@ -1,7 +1,7 @@
 export const products = [
   {
     id: "anon",
-    category: "communication",
+    category: "social",
     name: "Анонимный чат 12+",
     username: "anon_gender_chat_ru_bot",
     icon: "💬",
@@ -11,130 +11,101 @@ export const products = [
   },
   {
     id: "english",
-    category: "communication",
-    name: "English Talk Match",
+    category: "learning",
+    name: "Tectra Study Cards",
     username: "EnglishTalkMatchBot",
-    icon: "🇬🇧",
-    keywords: ["английский", "язык", "практика", "разговор", "english", "учёба"],
-    tagline: "Разговорная практика английского",
-    description: "Подбор собеседника близкого уровня для живой языковой практики."
+    icon: "📚",
+    keywords: ["учёба", "карточки", "flashcards", "повторение", "экзамен", "запомнить", "слова"],
+    tagline: "Карточки и повторение без отдельного приложения",
+    description: "Создаёт личные flashcards и чаще возвращает карточки, которые пользователь знает хуже."
   },
   {
     id: "focus",
-    category: "productivity",
-    name: "Focus Sprint",
+    category: "utility",
+    name: "Tectra Random",
     username: "FocusSprintTimerBot",
-    icon: "🎯",
-    keywords: ["фокус", "таймер", "работа", "учёба", "концентрация", "pomodoro"],
-    tagline: "Фокус-сессии без лишних приложений",
-    description: "Таймеры на 25, 50 и 90 минут, конкретная цель и личная статистика."
+    icon: "🎲",
+    keywords: ["рандом", "случайно", "розыгрыш", "выбрать", "жребий", "кубик", "монетка", "random"],
+    tagline: "Рандомайзер и быстрые жеребьёвки",
+    description: "Случайные числа, выбор из списка, монетка, кубик и перемешивание вариантов."
   },
   {
     id: "game",
-    category: "communication",
-    name: "Game Mate",
+    category: "social",
+    name: "Tectra Meet 18+",
     username: "GameMateFinderRuBot",
-    icon: "🎮",
-    keywords: ["игры", "тиммейт", "напарник", "команда", "cs2", "dota", "minecraft"],
-    tagline: "Поиск тиммейтов для игр",
-    description: "Подбор по игре, платформе, возрастной группе и стилю игры."
+    icon: "💞",
+    keywords: ["знакомства", "дейтинг", "люди", "город", "интересы", "пара", "встреча", "18+"],
+    tagline: "Знакомства по городу и интересам",
+    description: "Короткие анкеты 18+, поиск людей в своём городе и контакт при взаимной симпатии."
   },
   {
     id: "budget",
-    category: "life",
-    name: "Pocket Budget",
+    category: "utility",
+    name: "Tectra Rates",
     username: "PocketBudgetRuBot",
-    icon: "💰",
-    keywords: ["деньги", "финансы", "бюджет", "расходы", "доходы", "учёт"],
-    tagline: "Простой учёт личных финансов",
-    description: "Доходы, расходы, месячный лимит, предупреждения, сводки и CSV-экспорт прямо в Telegram."
+    icon: "💱",
+    keywords: ["валюта", "курс", "доллар", "евро", "злотый", "конвертер", "bitcoin", "crypto", "крипта"],
+    tagline: "Конвертер валют и криптокурсы",
+    description: "Быстрый пересчёт сумм между валютами и справочные цены популярных криптовалют."
   },
   {
     id: "tasks",
-    category: "productivity",
-    name: "Task Pulse",
+    category: "creator",
+    name: "Tectra Post Studio",
     username: "DevTaks_bot",
-    icon: "✅",
-    keywords: ["задачи", "дела", "напоминания", "напомнить", "список", "планы", "организация"],
-    tagline: "Задачи и напоминания в Telegram",
-    description: "Быстро создаёт задачу, напоминает в нужное время и считает выполненные дела."
+    icon: "📝",
+    keywords: ["пост", "канал", "публикация", "контент", "текст", "ссылка", "админ", "автор"],
+    tagline: "Подготовка и публикация постов в Telegram",
+    description: "Чистит текст, создаёт ссылки и публикует пост в каналы, где бот назначен администратором."
   },
   {
     id: "quiz",
-    category: "entertainment",
-    name: "Tectra Quiz",
+    category: "utility",
+    name: "Tectra Media Saver",
     username: "TectraQuizBot",
-    icon: "🧠",
-    keywords: ["квиз", "викторина", "вопросы", "знания", "игра", "развлечение", "эрудиция"],
-    tagline: "Короткие вопросы на кругозор со счётом",
-    description: "Быстрые викторины с вариантами ответа, объяснениями, личным результатом и приглашениями друзей."
+    icon: "📥",
+    keywords: ["скачать", "download", "media", "видео", "файл", "сохранить", "ссылка", "аудио"],
+    tagline: "Сохранение публичных файлов по прямой ссылке",
+    description: "Забирает прямой публичный URL и возвращает файл в Telegram; без обхода DRM и приватного доступа."
   },
   {
     id: "party",
-    category: "entertainment",
-    name: "Tectra Party",
+    category: "admin",
+    name: "Tectra Join Guard",
     username: "TectraPartyBot",
-    icon: "🎉",
-    keywords: ["вечеринка", "компания", "правда", "действие", "крокодил", "история", "игра", "созвон"],
-    tagline: "Игры и импровизация для компании",
-    description: "Семь режимов для друзей и созвонов: вопросы, действия, пантомима, ледоколы и совместные истории."
+    icon: "🛡",
+    keywords: ["заявки", "вступление", "группа", "канал", "админ", "модерация", "approve", "join"],
+    tagline: "Автоприём заявок в группы и каналы",
+    description: "Автоматически принимает join requests там, где бот назначен администратором."
   }
 ];
 
 export const contentChannels = [
-  {
-    id: "ai",
-    name: "TerraTectra AI Практика",
-    username: "TerraTectraAI",
-    icon: "🧩",
-    tagline: "Прикладной ИИ и автоматизация без новостного шума"
-  },
-  {
-    id: "focus",
-    name: "TerraTectra Фокус",
-    username: "TerraTectraFocus",
-    icon: "🎯",
-    tagline: "Задачи, внимание и спокойная система работы"
-  },
-  {
-    id: "money",
-    name: "TerraTectra Деньги",
-    username: "TerraTectraMoney",
-    icon: "💰",
-    tagline: "Бытовой учёт денег и устойчивые финансовые привычки"
-  },
-  {
-    id: "fun",
-    name: "Tectra Развлечения",
-    username: "TectraFun",
-    icon: "🎉",
-    tagline: "Квизы, загадки, мини-игры и идеи для нескучного перерыва"
-  },
-  {
-    id: "quiz",
-    name: "Tectra Квиз",
-    username: "TectraQuiz",
-    icon: "🧠",
-    tagline: "Вопросы на кругозор, короткие разборы и ежедневные испытания"
-  }
+  { id: "ai", name: "TerraTectra AI Практика", username: "TerraTectraAI", icon: "🧩", tagline: "Прикладной ИИ и автоматизация без новостного шума" },
+  { id: "focus", name: "TerraTectra Фокус", username: "TerraTectraFocus", icon: "🎯", tagline: "Задачи, внимание и спокойная система работы" },
+  { id: "money", name: "TerraTectra Деньги", username: "TerraTectraMoney", icon: "💰", tagline: "Бытовой учёт денег и устойчивые финансовые привычки" },
+  { id: "fun", name: "Tectra Развлечения", username: "TectraFun", icon: "🎉", tagline: "Развлекательный канал сети" },
+  { id: "quiz", name: "Tectra Квиз", username: "TectraQuiz", icon: "🧠", tagline: "Короткие вопросы и знания" }
 ];
 
 export const categories = [
-  { id: "communication", label: "💬 Общение и люди" },
-  { id: "productivity", label: "🎯 Работа и фокус" },
-  { id: "life", label: "🏠 Для жизни" },
-  { id: "entertainment", label: "🎉 Развлечения" }
+  { id: "social", label: "💬 Общение" },
+  { id: "utility", label: "🧰 Утилиты" },
+  { id: "creator", label: "📝 Для каналов" },
+  { id: "admin", label: "🛡 Для админов" },
+  { id: "learning", label: "📚 Учёба" }
 ];
 
 export const recommendationIntents = [
-  { id: "focus", label: "🧠 Сосредоточиться", productId: "focus" },
-  { id: "remember", label: "✅ Не забыть дело", productId: "tasks" },
-  { id: "talk", label: "💬 Найти собеседника", productId: "anon" },
-  { id: "english", label: "🇬🇧 Практиковать английский", productId: "english" },
-  { id: "team", label: "🎮 Найти тиммейта", productId: "game" },
-  { id: "money", label: "💰 Разобраться с деньгами", productId: "budget" },
-  { id: "quiz", label: "🧠 Проверить кругозор", productId: "quiz" },
-  { id: "party", label: "🎉 Развлечь компанию", productId: "party" }
+  { id: "talk", label: "💬 Поговорить анонимно", productId: "anon" },
+  { id: "meet", label: "💞 Познакомиться", productId: "game" },
+  { id: "download", label: "📥 Сохранить файл", productId: "quiz" },
+  { id: "random", label: "🎲 Выбрать случайно", productId: "focus" },
+  { id: "rates", label: "💱 Узнать курс", productId: "budget" },
+  { id: "post", label: "📝 Сделать пост", productId: "tasks" },
+  { id: "join", label: "🛡 Принимать заявки", productId: "party" },
+  { id: "study", label: "📚 Учить карточки", productId: "english" }
 ];
 
 export function productLink(product, source = "src_family_catalog") {
@@ -151,7 +122,7 @@ export function productsByCategory(category) {
 
 export function searchProducts(query) {
   const stopWords = new Set(["мне", "нужно", "хочу", "для", "чтобы", "бот", "найти", "помоги"]);
-  const words = (query.toLowerCase().replace(/ё/g, "е").match(/[a-zа-я0-9]+/g) || [])
+  const words = (query.toLowerCase().replace(/ё/g, "е").match(/[a-zа-я0-9+]+/g) || [])
     .filter((word) => word.length >= 3 && !stopWords.has(word));
   if (!words.length) return [];
   return products

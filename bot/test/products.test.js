@@ -3,16 +3,18 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { channelLink, contentChannels, productLink, products, productsByCategory, recommendationIntents, searchProducts } from "../src/products.js";
 
-test("product catalog has unique bots and tracked links", () => {
+test("product catalog exposes the rebuilt niche lineup", () => {
   assert.equal(products.length, 8);
   assert.equal(new Set(products.map((item) => item.id)).size, products.length);
   assert.equal(new Set(products.map((item) => item.username)).size, products.length);
-  assert.ok(productsByCategory("communication").length >= 2);
-  assert.equal(productsByCategory("entertainment").length, 2);
+  assert.equal(products.filter((item) => item.id === "anon").length, 1);
+  assert.ok(productsByCategory("social").length >= 2);
+  assert.ok(productsByCategory("utility").length >= 3);
   assert.match(productLink(products[0], "src_hub"), /\?start=src_hub_anon$/);
-  assert.equal(searchProducts("напомнить о делах")[0].id, "tasks");
-  assert.deepEqual(searchProducts("Мне нужно напомнить о делах").map((product) => product.id), ["tasks"]);
-  assert.equal(searchProducts("практика английского")[0].id, "english");
+  assert.equal(searchProducts("скачать видео файл")[0].id, "quiz");
+  assert.equal(searchProducts("случайно выбрать победителя")[0].id, "focus");
+  assert.equal(searchProducts("курс доллара евро")[0].id, "budget");
+  assert.equal(searchProducts("карточки для экзамена")[0].id, "english");
   assert.equal(searchProducts("совсем неизвестная штука").length, 0);
 });
 
@@ -28,10 +30,9 @@ test("recommendation intents point to existing products", () => {
   assert.ok(recommendationIntents.every((intent) => productIds.has(intent.productId)));
 });
 
-test("entertainment channels promote direct daily activities", () => {
+test("legacy entertainment channels still have valid tracked promotions until channel strategy is rebuilt", () => {
   const config = JSON.parse(fs.readFileSync(new URL("../content/channels.json", import.meta.url), "utf8"));
   const channels = Object.fromEntries(config.channels.map((channel) => [channel.id, channel]));
-
   assert.match(channels.fun.promotion.text, /TectraPartyBot\?start=src_channel_fun_daily$/);
   assert.match(channels.quiz.promotion.text, /TectraQuizBot\?start=src_channel_quiz_daily$/);
   assert.ok(channels.fun.schedule.length >= 4);

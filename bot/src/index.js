@@ -2,15 +2,17 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { createAdminBot } from "./admin-bot.js";
-import { createBudgetBot } from "./budget-bot.js";
 import { ChannelPublisher } from "./channel-publisher.js";
-import { createEnglishBot } from "./english-bot.js";
-import { createFocusBot } from "./focus-bot.js";
-import { createGameBot } from "./game-bot.js";
 import { createHubBot } from "./hub-bot.js";
-import { createPartyBot } from "./party-bot.js";
-import { createQuizBot } from "./quiz-bot.js";
-import { createTaskBot } from "./task-bot.js";
+import {
+  createDatingBot,
+  createJoinGuardBot,
+  createMediaBot,
+  createPostBot,
+  createRandomBot,
+  createRatesBot,
+  createStudyBot
+} from "./niche-bots.js";
 import { createUserBot } from "./user-bot.js";
 import { isTelegramPollingConflict, safeErrorSummary } from "./safe-error.js";
 import { acquireSingleInstance, AlreadyRunningError, SINGLE_INSTANCE_EXIT_CODE } from "./single-instance.js";
@@ -52,7 +54,7 @@ const quizDbPath = process.env.QUIZ_DB_PATH || "./data/quiz.db";
 const partyDbPath = process.env.PARTY_DB_PATH || "./data/party.db";
 const sessionArchiveRoot = process.env.SESSION_ARCHIVE_ROOT || undefined;
 const userBot = createUserBot(token, dbPath, { sessionArchiveRoot });
-const partyBot = partyToken ? createPartyBot(partyToken, partyDbPath) : null;
+const partyBot = partyToken ? createJoinGuardBot(partyToken, partyDbPath) : null;
 let channelPublisher = null;
 const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
   sessionArchiveRoot,
@@ -81,19 +83,17 @@ const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
   channelStatusProvider: () => channelPublisher?.status() || []
 });
 channelPublisher = new ChannelPublisher(
-  (channel) => channel.publisher === "party" && partyBot ? partyBot.api : adminBot.api,
+  () => adminBot.api,
   process.env.CHANNELS_CONFIG_PATH || "./content/channels.json",
   process.env.CHANNELS_STATE_PATH || "./data/channel-publisher-state.json"
 );
-const englishBot = englishToken ? createEnglishBot(englishToken, englishDbPath) : null;
-const focusBot = focusToken ? createFocusBot(focusToken, focusDbPath) : null;
-const gameBot = gameToken ? createGameBot(gameToken, gameDbPath) : null;
-const budgetBot = budgetToken ? createBudgetBot(budgetToken, budgetDbPath) : null;
+const englishBot = englishToken ? createStudyBot(englishToken, englishDbPath) : null;
+const focusBot = focusToken ? createRandomBot(focusToken, focusDbPath) : null;
+const gameBot = gameToken ? createDatingBot(gameToken, gameDbPath) : null;
+const budgetBot = budgetToken ? createRatesBot(budgetToken, budgetDbPath) : null;
 const hubBot = hubToken ? createHubBot(hubToken, hubDbPath) : null;
-const taskBot = taskToken ? createTaskBot(taskToken, taskDbPath) : null;
-const quizBot = quizToken ? createQuizBot(quizToken, quizDbPath) : null;
-focusBot?.startFocusScheduler();
-taskBot?.startTaskScheduler();
+const taskBot = taskToken ? createPostBot(taskToken, taskDbPath) : null;
+const quizBot = quizToken ? createMediaBot(quizToken, quizDbPath) : null;
 adminBot.startDailyReportScheduler();
 channelPublisher.start();
 
@@ -147,15 +147,20 @@ function shutdown(status = "stopped", details = {}) {
     safely(() => channelPublisher.stop());
     safely(() => adminBot.stop());
     safely(() => englishBot?.stop());
-    safely(() => focusBot?.stopFocusScheduler());
     safely(() => focusBot?.stop());
     safely(() => gameBot?.stop());
     safely(() => budgetBot?.stop());
     safely(() => hubBot?.stop());
-    safely(() => taskBot?.stopTaskScheduler());
     safely(() => taskBot?.stop());
     safely(() => quizBot?.stop());
     safely(() => partyBot?.stop());
+    safely(() => englishBot?.closeStore?.());
+    safely(() => focusBot?.closeStore?.());
+    safely(() => gameBot?.closeStore?.());
+    safely(() => budgetBot?.closeStore?.());
+    safely(() => taskBot?.closeStore?.());
+    safely(() => quizBot?.closeStore?.());
+    safely(() => partyBot?.closeStore?.());
     safely(() => userBot.closeStore());
     safely(() => adminBot.closeStore());
     await instanceLock.release();
@@ -165,6 +170,9 @@ function shutdown(status = "stopped", details = {}) {
 
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
+
+const publicNicheBots = [englishBot, focusBot, gameBot, budgetBot, taskBot, quizBot, partyBot].filter(Boolean);
+await Promise.allSettled(publicNicheBots.map((bot) => bot.syncProfile?.()));
 
 console.log(`Starting ${botCount} bots in long-polling mode`);
 const starts = [
