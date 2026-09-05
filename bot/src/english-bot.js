@@ -4,6 +4,7 @@ import { catalogLabel, createCatalogHandler } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
 import { inviteKeyboard } from "./referrals.js";
 import { safeErrorSummary } from "./safe-error.js";
+import { installEnglishPractice } from "./english-practice.js";
 
 const labels = {
   search: "🗣 Find a partner",
@@ -152,6 +153,7 @@ export function createEnglishBot(token, dbPath) {
   bot.command("invite", showInvite);
   bot.command("report", beginReport);
   bot.command("rules", (ctx) => ctx.reply("Speak respectfully. No harassment, sexual content involving minors, spam, threats, or requests for private data. Use Report when needed.", { reply_markup: menu }));
+  installEnglishPractice(bot, store);
   bot.command("catalog", showCatalog);
 
   bot.command("reset", async (ctx) => {

@@ -57,9 +57,14 @@ export function postChatKeyboard() {
 }
 
 export function createUserBot(token, dbPath, options = {}) {
-  const store = new Store(dbPath, { sessionArchiveRoot: options.sessionArchiveRoot });
+  const store = options.store ?? new Store(dbPath, { sessionArchiveRoot: options.sessionArchiveRoot });
   const bot = new Bot(token);
   const showCatalog = createCatalogHandler("anon");
+  // Keep button actions and slash commands routed to exactly the same handler.
+  const registerAction = (label, command, handler) => {
+    bot.hears(label, handler);
+    bot.command(command, handler);
+  };
   const retentionTimer = setInterval(() => {
     try {
       store.purgeExpiredChatSessions();
@@ -138,6 +143,11 @@ export function createUserBot(token, dbPath, options = {}) {
       await ctx.reply("Сначала создадим короткий профиль. Кто вы?", { reply_markup: genderKeyboard });
       return;
     }
+    if (user.partner_id) {
+      const previous = store.disconnect(ctx.from.id, "new_search");
+      await notifyPartner(ctx, previous, "\u0421\u043e\u0431\u0435\u0441\u0435\u0434\u043d\u0438\u043a \u043d\u0430\u0447\u0430\u043b \u043d\u043e\u0432\u044b\u0439 \u043f\u043e\u0438\u0441\u043a.");
+    }
+    ctx.session.step = null;
     store.recordEvent(ctx.from.id, "search");
     const result = store.enqueue(ctx.from.id, mode, filter.targetGender, filter.minAge, filter.maxAge);
     if (result.status === "limit") {
@@ -201,23 +211,25 @@ export function createUserBot(token, dbPath, options = {}) {
     await notifyPartner(ctx, reportedId, "Собеседник завершил чат.");
   });
 
-  bot.hears(labels.random, (ctx) => startSearch(ctx, "random"));
-  bot.hears(labels.filtered, async (ctx) => {
+  registerAction(labels.random, "search", (ctx) => startSearch(ctx, "random"));
+  registerAction(labels.filtered, "filters", async (ctx) => {
     const user = store.getUser(ctx.from.id);
     if (!profileReady(user)) return startSearch(ctx, "filtered");
     ctx.session.step = "filter_gender";
     await ctx.reply(`Кого искать? Осталось фильтрованных совпадений сегодня: ${store.filteredRemaining(ctx.from.id)}.`, { reply_markup: filterGenderKeyboard });
   });
 
-  bot.hears(labels.stop, async (ctx) => {
+  registerAction(labels.stop, "stop", async (ctx) => {
     const user = store.getUser(ctx.from.id);
     const partnerId = store.disconnect(ctx.from.id, "stop");
+    ctx.session.step = null;
+    ctx.session.pendingReportId = null;
     const message = partnerId ? "Чат завершён." : user?.state === "searching" ? "Поиск остановлен." : "Вы не участвуете в чате или поиске.";
     await ctx.reply(message, { reply_markup: partnerId ? postChatKeyboard() : menuKeyboard });
     await notifyPartner(ctx, partnerId, "Собеседник завершил чат.", postChatKeyboard());
   });
 
-  bot.hears(labels.next, async (ctx) => {
+  registerAction(labels.next, "next", async (ctx) => {
     const user = store.getUser(ctx.from.id);
     const partnerId = store.disconnect(ctx.from.id, "next");
     await notifyPartner(ctx, partnerId, "Собеседник переключился на следующий чат.");
@@ -228,7 +240,7 @@ export function createUserBot(token, dbPath, options = {}) {
     });
   });
 
-  bot.hears(labels.report, async (ctx) => {
+  registerAction(labels.report, "report", async (ctx) => {
     const user = store.getUser(ctx.from.id);
     if (!user?.partner_id) {
       await ctx.reply("Сейчас нет активного собеседника.", { reply_markup: menuKeyboard });
@@ -238,7 +250,7 @@ export function createUserBot(token, dbPath, options = {}) {
     await ctx.reply("Жалоба завершит чат и навсегда исключит этого пользователя из вашего поиска.", { reply_markup: confirmReportKeyboard });
   });
 
-  bot.hears(labels.profile, async (ctx) => {
+  registerAction(labels.profile, "profile", async (ctx) => {
     const user = store.getUser(ctx.from.id);
     if (!profileReady(user)) {
       ctx.session.step = "gender";
@@ -283,6 +295,10 @@ export function createUserBot(token, dbPath, options = {}) {
 
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
+    if (text.startsWith("/")) {
+      await ctx.reply("Unknown command. Use /search, /filters, or /stop.", { reply_markup: menuKeyboard });
+      return;
+    }
     if (ctx.session.step === "age") {
       const age = Number(text);
       if (!Number.isInteger(age) || age < 12 || age > 99) {
