@@ -12,6 +12,7 @@ $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries `
   -StartWhenAvailable `
+  -MultipleInstances IgnoreNew `
   -ExecutionTimeLimit ([TimeSpan]::Zero)
 
 Register-ScheduledTask `
@@ -48,7 +49,10 @@ $healthTrigger = New-ScheduledTaskTrigger `
   -At (Get-Date).AddMinutes(1) `
   -RepetitionInterval (New-TimeSpan -Minutes 5) `
   -RepetitionDuration (New-TimeSpan -Days 3650)
-$healthSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+$healthSettings = New-ScheduledTaskSettingsSet `
+  -StartWhenAvailable `
+  -MultipleInstances IgnoreNew `
+  -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 Register-ScheduledTask `
   -TaskName "AnonGenderChatHealthCheck" `
   -Action $healthAction `

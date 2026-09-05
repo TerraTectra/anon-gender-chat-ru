@@ -1,0 +1,22 @@
+{
+  "brand": "Tectra Scene Lab",
+  "platforms": ["youtube_shorts", "tiktok", "telegram"],
+  "series": [
+    {
+      "id": "why-scene-works",
+      "title": "Почему сцена работает",
+      "description": "Короткий разбор режиссуры, монтажа, музыки или актерской подачи."
+    },
+    {
+      "id": "hidden-detail",
+      "title": "Деталь, которую легко пропустить",
+      "description": "Одна визуальная или сюжетная деталь и ее значение."
+    },
+    {
+      "id": "character-in-45",
+      "title": "Персонаж за 45 секунд",
+      "description": "Один выбор персонажа и то, что он говорит о его мотивации."
+    }
+  ],
+  "episodes": []
+}

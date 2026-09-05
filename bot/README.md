@@ -2,11 +2,13 @@
 
 ## Entertainment launch
 
-- `@TectraQuizBot` combines short quizzes, scores, referrals and party modes: truth, dare, would-you-rather, charades and icebreakers.
-- `@TectraFun` is prepared for entertainment prompts three times a day at 08:45, 14:15 and 20:45 Moscow time; publishing activates after the Admin Hub receives channel posting rights.
-- `@TectraQuiz` is prepared for quiz posts twice a day at 11:00 and 19:30 Moscow time under the same permission gate.
+- `@TectraQuizBot` focuses on short quizzes, scores and referrals.
+- `@TectraPartyBot` provides seven social modes: truth, dare, would-you-rather, charades, icebreakers, collaborative stories and "who is most likely" prompts.
+- `@TectraFun` publishes entertainment prompts four times a day at 08:45, 12:30, 16:15 and 20:45 Moscow time.
+- `@TectraQuiz` publishes quiz posts three times a day at 10:00, 14:00 and 19:30 Moscow time.
+- `@TectraPartyBot` is the channel publisher and has only the Telegram permission required to post messages.
 - The AI, focus and money channels now publish twice a day. Every schedule slot is tracked separately, so restarts do not create duplicate posts.
-- A separate Party bot is implemented but remains optional because the Telegram owner account reached its 20-bot limit; all Party modes are available inside `@TectraQuizBot`.
+- Quiz keeps a compact party shortcut, while the standalone Party bot offers the broader entertainment catalogue and separate engagement statistics.
 
 Одна Node.js-служба запускает пользовательские продукты и общую закрытую админку. Данные каждого продукта хранятся в отдельной SQLite-базе.
 
@@ -21,7 +23,15 @@
 - `@FocusSprintTimerBot` — устойчивые к перезапуску фокус-таймеры.
 - `@GameMateFinderRuBot` — поиск игровых напарников.
 - `@PocketBudgetRuBot` — учёт доходов и расходов с CSV-экспортом.
-- `@anon_gender_chat_ru_admin_bot` — статистика, рост, жалобы и общие блокировки.
+- `@anon_gender_chat_ru_admin_bot` — единый админ-хаб: статистика сети, жалобы, блокировки, активные и сохранённые медиасессии анонимного чата.
+
+## Сессии анонимного чата
+
+- Админ-хаб показывает текущие пары без сохранения текста переписки.
+- Фото, видео и видеокружки временно загружаются в `data/chat-session-archive`, который не попадает в 14-дневные копии основных баз.
+- Шестое суммарное вложение включает сохранение медиасессии. После завершения она доступна семь суток, затем метаданные и локальные файлы удаляются.
+- Сессии с пятью или меньшим числом целевых вложений удаляются сразу после завершения.
+- Стандартный Telegram Bot API не позволяет скачать файл больше 20 МБ. Для такого файла админ-хаб хранит метаданные и при просмотре использует основной анон-бот как резервный канал отправки.
 
 ## Контентные каналы
 
@@ -32,6 +42,7 @@
 ## Надёжность
 
 - `AnonGenderChatBot` держит сеть запущенной и перезапускает процесс после сбоя.
+- И служба Node.js, и фоновый runner имеют singleton-защиту: вторая копия не начинает polling и не запускает бесконечный цикл конфликтов.
 - `AnonGenderChatHealthCheck` проверяет `data/health.json` каждые пять минут.
 - `AnonGenderChatBackup` ежедневно в 03:00 создаёт согласованные SQLite-копии.
 - Копии хранятся в `data/backups` 14 дней.
@@ -50,6 +61,7 @@
 
 ```powershell
 npm test
+npm run profiles:audit:strict
 node --check src/index.js
 node scripts/backup.mjs
 ```
@@ -57,10 +69,12 @@ node scripts/backup.mjs
 В админ-боте доступны:
 
 - `/stats` — текущее состояние;
+- `/sessions` — активные сессии анонимного чата;
+- `/media_sessions` — активные и завершённые медиасессии с шестью и более вложениями;
 - `/growth` — продуктовые метрики за семь дней;
 - `/reports` — жалобы из чат-ботов;
 - `/sources` — источники пользователей, включая переходы из хаба;
-- `/campaigns` — объединённые источники по всему семейству;
+- `/campaigns` — регистрации, активные пользователи, конверсия и действия по каждому источнику во всём семействе;
 - `/funnel` — конверсия семейного хаба и интерес к продуктам;
 - `/channels` — расписание и состояние автопубликаций;
 - `/ban ID` и `/unban ID` — блокировка во всей сети.

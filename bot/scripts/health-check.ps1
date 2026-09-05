@@ -9,6 +9,10 @@ $stale = $true
 if (Test-Path -LiteralPath $healthPath) {
   try {
     $health = Get-Content -Raw -Encoding utf8 -LiteralPath $healthPath | ConvertFrom-Json
+    if ($health.status -eq "conflict") {
+      "[$(Get-Date -Format o)] Polling conflict is recorded; automatic restart skipped." | Out-File -FilePath $logPath -Append -Encoding utf8
+      exit 0
+    }
     $updated = [DateTimeOffset]::Parse($health.updated_at)
     $stale = ([DateTimeOffset]::UtcNow - $updated).TotalMinutes -gt 2
   }
@@ -20,6 +24,10 @@ if (Test-Path -LiteralPath $healthPath) {
 if ($stale) {
   "[$(Get-Date -Format o)] Health file is stale; restarting bot task." | Out-File -FilePath $logPath -Append -Encoding utf8
   Stop-ScheduledTask -TaskName "AnonGenderChatBot" -ErrorAction SilentlyContinue
-  Start-Sleep -Seconds 2
+  for ($attempt = 0; $attempt -lt 30; $attempt += 1) {
+    $state = (Get-ScheduledTask -TaskName "AnonGenderChatBot" -ErrorAction SilentlyContinue).State
+    if ($state -ne "Running") { break }
+    Start-Sleep -Seconds 1
+  }
   Start-ScheduledTask -TaskName "AnonGenderChatBot"
 }

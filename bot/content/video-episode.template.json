@@ -1,0 +1,19 @@
+{
+  "id": "pilot-001",
+  "status": "draft",
+  "seriesId": "why-scene-works",
+  "animeTitle": "",
+  "season": 1,
+  "episode": 1,
+  "sourcePath": "",
+  "rightsBasis": "review_criticism",
+  "timecode": {
+    "start": "00:00:00",
+    "end": "00:00:12"
+  },
+  "hook": "",
+  "commentary": "",
+  "voiceover": "",
+  "onScreenSource": "Название - сезон 1, серия 1",
+  "telegramLink": "https://t.me/TerraTectraBotsBot?start=src_short_anime"
+}

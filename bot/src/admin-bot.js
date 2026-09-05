@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { Bot, InlineKeyboard } from "grammy";
+import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { adminKeyboard } from "./keyboards.js";
 import { BudgetStore } from "./budget-store.js";
 import { EngagementStore } from "./engagement-store.js";
@@ -9,6 +9,7 @@ import { GameStore } from "./game-store.js";
 import { LanguageStore } from "./language-store.js";
 import { HubStore } from "./hub-store.js";
 import { products as catalogProducts } from "./products.js";
+import { safeErrorSummary } from "./safe-error.js";
 import { TaskStore } from "./task-store.js";
 import { Store } from "./store.js";
 
@@ -18,6 +19,48 @@ function parseAdmins(value = "") {
 
 function statsText(stats) {
   return `Пользователей: ${stats.users}\nИщут: ${stats.searching}\nАктивных чатов: ${stats.chatting}\nНовых жалоб: ${stats.reports}\nЗаблокировано: ${stats.banned}`;
+}
+
+const SESSION_PAGE_SIZE = 8;
+
+function moscowDateTime(timestamp) {
+  if (!timestamp) return "неизвестно";
+  return new Date(Number(timestamp)).toLocaleString("ru-RU", {
+    timeZone: "Europe/Moscow",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function elapsedText(milliseconds) {
+  const totalMinutes = Math.max(0, Math.floor(Number(milliseconds || 0) / 60_000));
+  if (totalMinutes < 60) return `${totalMinutes} мин.`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours < 24) return minutes ? `${hours} ч ${minutes} мин.` : `${hours} ч`;
+  const days = Math.floor(hours / 24);
+  return `${days} дн. ${hours % 24} ч`;
+}
+
+function participantText(participant) {
+  const username = participant.username ? `@${participant.username}` : "без username";
+  const gender = participant.gender === "male" ? "м" : participant.gender === "female" ? "ж" : "—";
+  return `${username} · ID ${participant.id} · ${gender}, ${participant.age ?? "—"}`;
+}
+
+export function chatSessionText(session, now = Date.now()) {
+  const active = session.status === "active";
+  const until = active ? now : session.ended_at_ms;
+  const status = active ? "активна" : "завершена";
+  const recovered = session.legacy_backfill ? "\nНачало восстановлено после перезапуска и может быть неточным." : "";
+  const expiry = session.expires_at_ms ? `\nУдаление архива: ${moscowDateTime(session.expires_at_ms)} МСК` : "";
+  const unavailable = Number(session.unavailable_count || 0)
+    ? `\nНедоступно локально: ${session.unavailable_count}`
+    : "";
+  return `Сессия #${session.id}\nСтатус: ${status}\nУчастники:\n1. ${participantText(session.participants[0])}\n2. ${participantText(session.participants[1])}\n\nНачало: ${moscowDateTime(session.started_at_ms)} МСК\nПоследняя активность: ${moscowDateTime(session.last_activity_at_ms)} МСК\nДлительность: ${elapsedText(Number(until) - Number(session.started_at_ms))}\n\nВложения: ${session.media_count}\nФото: ${session.photo_count} · видео: ${session.video_count} · кружки: ${session.video_note_count}\nСохранено локально: ${session.stored_count}${unavailable}${expiry}${recovered}`;
 }
 
 export function aggregateSourceStats(products, limit = 15) {
@@ -37,8 +80,43 @@ export function aggregateSourceStats(products, limit = 15) {
     .map((row) => ({ source: row.source, users: row.users, products: row.products.size }));
 }
 
+export function aggregateCampaignPerformance(products, limit = 15) {
+  const campaigns = new Map();
+  for (const [product, productStore] of products) {
+    if (!productStore) continue;
+    const rows = productStore.sourcePerformanceStats?.(100) || productStore.sourceStats(100);
+    for (const row of rows) {
+      const current = campaigns.get(row.source) || {
+        source: row.source,
+        users: 0,
+        activeUsers: 0,
+        actions: 0,
+        products: new Set()
+      };
+      current.users += Number(row.users || 0);
+      current.activeUsers += Number(row.active_users || 0);
+      current.actions += Number(row.actions || 0);
+      current.products.add(product);
+      campaigns.set(row.source, current);
+    }
+  }
+  return [...campaigns.values()]
+    .sort((left, right) => right.users - left.users
+      || right.activeUsers - left.activeUsers
+      || right.actions - left.actions
+      || left.source.localeCompare(right.source))
+    .slice(0, limit)
+    .map((row) => ({
+      source: row.source,
+      users: row.users,
+      activeUsers: row.activeUsers,
+      actions: row.actions,
+      products: row.products.size
+    }));
+}
+
 export function createAdminBot(token, dbPath, adminIds, options = {}) {
-  const store = new Store(dbPath);
+  const store = new Store(dbPath, { sessionArchiveRoot: options.sessionArchiveRoot });
   const englishStore = options.englishDbPath ? new LanguageStore(options.englishDbPath) : null;
   const focusStore = options.focusDbPath ? new FocusStore(options.focusDbPath) : null;
   const gameStore = options.gameDbPath ? new GameStore(options.gameDbPath) : null;
@@ -53,6 +131,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   const reportStatePath = path.resolve(options.reportStatePath || "./data/admin-report-state.json");
   const reportHour = Number.isInteger(options.reportHour) ? options.reportHour : 10;
   let reportTimer = null;
+  bot.closeStore = () => store.close();
 
   const productKeyboard = new InlineKeyboard()
     .text("Анонимный чат", "admin_product:anon")
@@ -68,6 +147,13 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     .text("Tectra Party", "admin_product:party")
     .row()
     .text("TerraTectra Hub", "admin_product:hub");
+
+  const anonProductKeyboard = new InlineKeyboard()
+    .text("💬 Активные сессии", "anon_sessions:0")
+    .row()
+    .text("🗂 Медиа за 7 дней", "anon_retained:0")
+    .row()
+    .text("← Все боты", "admin_products");
 
   function networkOverviewText() {
     const chat = store.stats();
@@ -91,7 +177,11 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   }
 
   function productStatsText(product) {
-    if (product === "anon") return `Анонимный чат\n\n${statsText(store.stats())}\n\n${pairGrowthText("За 7 дней", store.growthStats())}`;
+    if (product === "anon") {
+      const activeSessions = store.listActiveChatSessions({ limit: 1 }).total;
+      const retainedSessions = store.listRetainedChatSessions({ limit: 1 }).total;
+      return `Анонимный чат\n\n${statsText(store.stats())}\nСессий в журнале: ${activeSessions}\nМедиасессий за 7 дней: ${retainedSessions}\n\n${pairGrowthText("За 7 дней", store.growthStats())}`;
+    }
     if (product === "english" && englishStore) return `English Talk Match\n\n${statsText(englishStore.stats())}\n\n${pairGrowthText("За 7 дней", englishStore.growthStats())}`;
     if (product === "game" && gameStore) return `Game Mate\n\n${statsText(gameStore.stats())}\n\n${pairGrowthText("За 7 дней", gameStore.growthStats())}`;
     if (product === "focus" && focusStore) {
@@ -129,7 +219,15 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     try {
       const health = JSON.parse(fs.readFileSync(healthPath, "utf8"));
       const updated = health.updated_at ? new Date(health.updated_at).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" }) : "нет данных";
-      return `Состояние системы\n\nСтатус: ${health.status === "running" ? "работает" : health.status}\nЗапущено ботов: ${health.bots ?? "нет данных"}\nПоследний сигнал: ${updated} МСК`;
+      const statuses = {
+        running: "работает",
+        starting: "запускается",
+        conflict: "остановлена: обнаружена вторая система polling",
+        failed: "остановлена из-за ошибки",
+        stopped: "остановлена"
+      };
+      const detail = health.error ? `\nПричина: ${health.error}` : "";
+      return `Состояние системы\n\nСтатус: ${statuses[health.status] || health.status}\nЗапущено ботов: ${health.bots ?? "нет данных"}\nПоследний сигнал: ${updated} МСК${detail}`;
     } catch {
       return "Состояние системы недоступно: файл health.json ещё не создан.";
     }
@@ -216,7 +314,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
         await sendDailyReport();
         saveLastReportDate(now.date);
       } catch (error) {
-        console.error("Daily admin report error", error);
+        console.error("Daily admin report error", safeErrorSummary(error));
       }
     }, 30_000);
   };
@@ -321,9 +419,10 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       ["Tectra Quiz", quizStore],
       ["Tectra Party", partyStore]
     ];
-    const rows = aggregateSourceStats(products);
-    const lines = rows.map((row, index) => `${index + 1}. ${row.source}: ${row.users} · продуктов: ${row.products}`);
-    return `Кампании по всему семейству\n\n${lines.length ? lines.join("\n") : "Данных пока нет"}`;
+    const rows = aggregateCampaignPerformance(products);
+    const percent = (value, total) => total ? Math.round(value * 100 / total) : 0;
+    const lines = rows.map((row, index) => `${index + 1}. ${row.source}\n${row.users} пришли · ${row.activeUsers} активны (${percent(row.activeUsers, row.users)}%) · ${row.actions} действий · продуктов: ${row.products}`);
+    return `Кампании по всему семейству\n\n${lines.length ? lines.join("\n\n") : "Данных пока нет"}`;
   }
 
   function hubFunnelText() {
@@ -344,9 +443,122 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       const last = channel.lastPublishedAt
         ? new Date(channel.lastPublishedAt).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" })
         : "публикаций ещё не было";
-      return `${channel.title}\n${state} · ${channel.schedule} МСК · в очереди: ${channel.queued}\nОпубликовано: ${channel.sent} · последнее: ${last}`;
+      const promotion = channel.promotionEvery ? ` · переход: каждый ${channel.promotionEvery}-й пост` : "";
+      return `${channel.title}\n${state} · ${channel.schedule} МСК · в очереди: ${channel.queued}${promotion}\nОпубликовано: ${channel.sent} · последнее: ${last}`;
     });
     return `Контентная сеть TerraTectra\n\n${lines.join("\n\n")}`;
+  }
+
+  function requirePrivateSessionArchive(ctx) {
+    return ctx.chat?.type === "private";
+  }
+
+  function sessionListKeyboard(result, kind, page) {
+    const keyboard = new InlineKeyboard();
+    for (const session of result.items) {
+      const media = Number(session.media_count || 0);
+      const marker = session.status === "active" ? "🟢" : "🗂";
+      keyboard.text(`${marker} #${session.id} · ${media} медиа`, `anon_session:${session.id}:${kind}:${page}`).row();
+    }
+    if (page > 0) keyboard.text("← Назад", `${kind === "a" ? "anon_sessions" : "anon_retained"}:${page - 1}`);
+    if ((page + 1) * SESSION_PAGE_SIZE < result.total) {
+      keyboard.text("Дальше →", `${kind === "a" ? "anon_sessions" : "anon_retained"}:${page + 1}`);
+    }
+    if (page > 0 || (page + 1) * SESSION_PAGE_SIZE < result.total) keyboard.row();
+    keyboard.text("← Анонимный чат", "admin_product:anon");
+    return keyboard;
+  }
+
+  async function showSessionList(ctx, kind, requestedPage = 0, edit = false) {
+    if (!requirePrivateSessionArchive(ctx)) {
+      const message = "Журнал сессий доступен только в личном чате с админ-ботом.";
+      await ctx.reply(message);
+      return;
+    }
+    store.purgeExpiredChatSessions();
+    const page = Math.max(0, Number(requestedPage) || 0);
+    const options = { limit: SESSION_PAGE_SIZE, offset: page * SESSION_PAGE_SIZE };
+    const result = kind === "a"
+      ? store.listActiveChatSessions(options)
+      : store.listRetainedChatSessions(options);
+    const title = kind === "a" ? "Активные сессии анонимного чата" : "Медиасессии: активные и завершённые за 7 дней";
+    const lines = result.items.map((session, index) => {
+      const number = page * SESSION_PAGE_SIZE + index + 1;
+      const time = session.status === "active" ? session.last_activity_at_ms : session.ended_at_ms;
+      return `${number}. #${session.id} · ${session.status === "active" ? "активна" : "завершена"} · ${session.media_count} медиа\n${moscowDateTime(time)} МСК`;
+    });
+    const text = `${title}\nВсего: ${result.total}\n\n${lines.length ? lines.join("\n\n") : "Сессий нет."}`;
+    const replyMarkup = sessionListKeyboard(result, kind, page);
+    if (edit) await ctx.editMessageText(text, { reply_markup: replyMarkup });
+    else await ctx.reply(text, { reply_markup: replyMarkup });
+  }
+
+  function sessionDetailKeyboard(session, listKind, page) {
+    const keyboard = new InlineKeyboard();
+    if (Number(session.media_count) > 0) keyboard.text("📎 Открыть вложения", `anon_attachment:${session.id}:0`).row();
+    keyboard.text("← К списку", `${listKind === "a" ? "anon_sessions" : "anon_retained"}:${page}`);
+    return keyboard;
+  }
+
+  function mediaNavigationKeyboard(sessionId, offset, total) {
+    const keyboard = new InlineKeyboard();
+    if (offset > 0) keyboard.text("← Предыдущее", `anon_attachment:${sessionId}:${offset - 1}`);
+    if (offset + 1 < total) keyboard.text("Следующее →", `anon_attachment:${sessionId}:${offset + 1}`);
+    if (offset > 0 || offset + 1 < total) keyboard.row();
+    keyboard.text("Сессия", `anon_session:${sessionId}:m:0`);
+    return keyboard;
+  }
+
+  async function sendLocalMedia(ctx, media, input, caption, replyMarkup) {
+    const common = { protect_content: true, reply_markup: replyMarkup };
+    if (media.kind === "photo") {
+      await ctx.api.sendPhoto(ctx.chat.id, input, { ...common, caption });
+    } else if (media.kind === "video") {
+      await ctx.api.sendVideo(ctx.chat.id, input, { ...common, caption });
+    } else {
+      await ctx.reply(caption);
+      await ctx.api.sendVideoNote(ctx.chat.id, input, common);
+    }
+  }
+
+  async function sendSessionMedia(ctx, sessionId, requestedOffset) {
+    if (!requirePrivateSessionArchive(ctx)) {
+      await ctx.answerCallbackQuery({ text: "Архив доступен только в личном чате.", show_alert: true });
+      return;
+    }
+    store.purgeExpiredChatSessions();
+    const offset = Math.max(0, Number(requestedOffset) || 0);
+    const result = store.listChatSessionMedia(sessionId, { limit: 1, offset });
+    const media = result.items[0];
+    if (!media) {
+      await ctx.answerCallbackQuery({ text: "Вложение удалено или сессия уже истекла.", show_alert: true });
+      return;
+    }
+    await ctx.answerCallbackQuery(`Вложение ${offset + 1} из ${result.total}`);
+    const resolved = store.resolveChatSessionMedia(media.id);
+    const kind = media.kind === "photo" ? "фото" : media.kind === "video" ? "видео" : "кружок";
+    const caption = `Сессия #${sessionId} · ${kind} ${offset + 1}/${result.total}\nОтправитель: ID ${media.sender_id}\n${moscowDateTime(media.created_at_ms)} МСК`;
+    const replyMarkup = mediaNavigationKeyboard(sessionId, offset, result.total);
+
+    if (resolved?.absolutePath) {
+      try {
+        await sendLocalMedia(ctx, media, new InputFile(resolved.absolutePath), caption, replyMarkup);
+        return;
+      } catch {
+        console.error(`Admin local media delivery failed for media ${media.id}`);
+      }
+    }
+
+    if (options.sourceMediaSender) {
+      try {
+        await options.sourceMediaSender(ctx.chat.id, media, caption);
+        await ctx.reply("Файл больше локального лимита или локальная копия недоступна. Он отправлен основным анон-ботом.", { reply_markup: replyMarkup });
+        return;
+      } catch {
+        console.error(`Admin source media delivery failed for media ${media.id}`);
+      }
+    }
+    await ctx.reply("Это вложение сейчас недоступно для просмотра. Метаданные сессии сохранены.", { reply_markup: replyMarkup });
   }
 
   bot.use(async (ctx, next) => {
@@ -367,10 +579,46 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   bot.hears(["🏠 Обзор", "🔄 Обновить"], (ctx) => ctx.reply(networkOverviewText(), { reply_markup: adminKeyboard }));
   bot.command("products", (ctx) => ctx.reply("Выберите продукт:", { reply_markup: productKeyboard }));
   bot.hears("🤖 Боты", (ctx) => ctx.reply("Выберите продукт:", { reply_markup: productKeyboard }));
-  bot.callbackQuery(/^admin_product:(anon|english|focus|game|budget|tasks|quiz|party|hub)$/, async (ctx) => {
+  bot.callbackQuery("admin_products", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText("Выберите продукт:", { reply_markup: productKeyboard });
+  });
+  bot.callbackQuery("admin_product:anon", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(productStatsText("anon"), { reply_markup: anonProductKeyboard });
+  });
+  bot.callbackQuery(/^admin_product:(english|focus|game|budget|tasks|quiz|party|hub)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(productStatsText(ctx.match[1]), { reply_markup: productKeyboard });
   });
+  bot.command("sessions", (ctx) => showSessionList(ctx, "a"));
+  bot.command("media_sessions", (ctx) => showSessionList(ctx, "m"));
+  bot.callbackQuery(/^anon_sessions:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await showSessionList(ctx, "a", Number(ctx.match[1]), true);
+  });
+  bot.callbackQuery(/^anon_retained:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await showSessionList(ctx, "m", Number(ctx.match[1]), true);
+  });
+  bot.callbackQuery(/^anon_session:(\d+):(a|m):(\d+)$/, async (ctx) => {
+    if (!requirePrivateSessionArchive(ctx)) {
+      await ctx.answerCallbackQuery({ text: "Журнал доступен только в личном чате.", show_alert: true });
+      return;
+    }
+    store.purgeExpiredChatSessions();
+    const sessionId = Number(ctx.match[1]);
+    const session = store.getChatSession(sessionId);
+    if (!session) {
+      await ctx.answerCallbackQuery({ text: "Сессия уже удалена.", show_alert: true });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(chatSessionText(session), {
+      reply_markup: sessionDetailKeyboard(session, ctx.match[2], Number(ctx.match[3]))
+    });
+  });
+  bot.callbackQuery(/^anon_attachment:(\d+):(\d+)$/, (ctx) => sendSessionMedia(ctx, Number(ctx.match[1]), Number(ctx.match[2])));
   bot.command("health", (ctx) => ctx.reply(healthText(), { reply_markup: adminKeyboard }));
   bot.hears("💚 Состояние", (ctx) => ctx.reply(healthText(), { reply_markup: adminKeyboard }));
   bot.command("daily", (ctx) => ctx.reply(dailyReportText(), { reply_markup: adminKeyboard }));
@@ -546,6 +794,6 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     await ctx.editMessageText(`Game Mate, жалоба #${reportId} закрыта без блокировки.`);
   });
 
-  bot.catch((error) => console.error("Admin bot error", error.error));
+  bot.catch((error) => console.error("Admin bot error", safeErrorSummary(error)));
   return bot;
 }

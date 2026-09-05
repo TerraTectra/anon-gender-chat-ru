@@ -8,7 +8,10 @@
     "start:user": "node src/user-bot-standalone.js",
     "dev": "node --watch src/index.js",
     "test": "node --test",
-    "profiles": "node scripts/update-profiles.js"
+    "profiles": "node scripts/update-profiles.js",
+    "profiles:audit": "node scripts/audit-bot-profiles.js",
+    "profiles:audit:strict": "node scripts/audit-bot-profiles.js --strict",
+    "videos:validate": "node scripts/validate-video-plan.js"
   },
   "engines": {
     "node": ">=22.5"

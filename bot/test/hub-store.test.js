@@ -9,7 +9,8 @@ test("hub stores users, product opens and suggestions", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bot-hub-"));
   const store = new HubStore(path.join(directory, "hub.db"));
 
-  store.upsertUser(10, "tester", "src_launch");
+  assert.deepEqual(store.upsertUser(10, "tester", "src_launch"), { isNew: true });
+  assert.deepEqual(store.upsertUser(10, "tester", "src_other"), { isNew: false });
   store.recordOpen(10, "focus", "recommend");
   store.recordOpen(10, "tasks", "search");
   store.addSuggestion(10, "Бот для планирования питания");

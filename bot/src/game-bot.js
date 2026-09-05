@@ -1,8 +1,9 @@
 import { Bot, InlineKeyboard, Keyboard, session } from "grammy";
 import { GameStore, normalizeGame } from "./game-store.js";
-import { catalogLabel, showCatalog } from "./catalog.js";
+import { catalogLabel, createCatalogHandler } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
 import { inviteKeyboard } from "./referrals.js";
+import { safeErrorSummary } from "./safe-error.js";
 
 const labels = {
   search: "🎮 Найти напарника",
@@ -78,6 +79,7 @@ const profileReady = (user) => Boolean(user?.age_group && user?.platform && user
 export function createGameBot(token, dbPath) {
   const store = new GameStore(dbPath);
   const bot = new Bot(token);
+  const showCatalog = createCatalogHandler("game");
   bot.use(session({ initial: () => ({ awaitingCustomGame: false, pendingReportId: null }) }));
 
   bot.use(async (ctx, next) => {
@@ -280,6 +282,6 @@ export function createGameBot(token, dbPath) {
     await ctx.api.copyMessage(user.partner_id, ctx.chat.id, ctx.message.message_id).catch(() => store.disconnect(ctx.from.id));
   });
 
-  bot.catch((error) => console.error("Game bot error", error.error));
+  bot.catch((error) => console.error("Game bot error", safeErrorSummary(error)));
   return bot;
 }

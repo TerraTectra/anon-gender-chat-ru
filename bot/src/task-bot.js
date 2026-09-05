@@ -1,8 +1,9 @@
 import { Bot, InlineKeyboard, Keyboard, session } from "grammy";
-import { catalogLabel, showCatalog } from "./catalog.js";
+import { catalogLabel, createCatalogHandler } from "./catalog.js";
 import { TaskStore } from "./task-store.js";
 import { parseStartSource } from "./tracking.js";
 import { inviteKeyboard } from "./referrals.js";
+import { safeErrorSummary } from "./safe-error.js";
 
 const labels = {
   add: "➕ Новая задача",
@@ -92,6 +93,7 @@ export function parseTaskDue(value, nowMs = Date.now()) {
 export function createTaskBot(token, dbPath) {
   const store = new TaskStore(dbPath);
   const bot = new Bot(token);
+  const showCatalog = createCatalogHandler("tasks");
   let scheduler = null;
   bot.use(session({ initial: () => ({ waitingTask: false, waitingDue: false, draftText: null }) }));
 
@@ -241,6 +243,6 @@ export function createTaskBot(token, dbPath) {
     scheduler = null;
   };
 
-  bot.catch((error) => console.error("Task bot error", error.error));
+  bot.catch((error) => console.error("Task bot error", safeErrorSummary(error)));
   return bot;
 }

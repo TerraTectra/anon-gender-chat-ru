@@ -1,8 +1,9 @@
 import { Bot, Keyboard, session } from "grammy";
 import { FocusStore } from "./focus-store.js";
-import { catalogLabel, showCatalog } from "./catalog.js";
+import { catalogLabel, createCatalogHandler } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
 import { inviteKeyboard } from "./referrals.js";
+import { safeErrorSummary } from "./safe-error.js";
 
 const labels = {
   short: "⏱ 25 минут",
@@ -37,6 +38,7 @@ function formatRemaining(seconds) {
 export function createFocusBot(token, dbPath) {
   const store = new FocusStore(dbPath);
   const bot = new Bot(token);
+  const showCatalog = createCatalogHandler("focus");
   let scheduler = null;
   bot.use(session({ initial: () => ({ pendingDuration: null }) }));
 
@@ -143,6 +145,6 @@ export function createFocusBot(token, dbPath) {
     scheduler = null;
   };
 
-  bot.catch((error) => console.error("Focus bot error", error.error));
+  bot.catch((error) => console.error("Focus bot error", safeErrorSummary(error)));
   return bot;
 }

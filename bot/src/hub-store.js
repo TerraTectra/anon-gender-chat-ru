@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { sourcePerformanceStats } from "./source-performance.js";
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -72,6 +73,7 @@ export class HubStore {
   }
 
   upsertUser(id, username, source = null) {
+    const isNew = !this.db.prepare("SELECT 1 FROM users WHERE id = ?").get(id);
     this.db.prepare(`
       INSERT INTO users (id, username, source) VALUES (?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
@@ -79,6 +81,7 @@ export class HubStore {
         source = COALESCE(users.source, excluded.source),
         updated_at = CURRENT_TIMESTAMP
     `).run(id, username ?? null, source);
+    return { isNew };
   }
 
   recordOpen(userId, productId, source = "catalog") {
@@ -203,6 +206,12 @@ export class HubStore {
       SELECT source, COUNT(*) AS users FROM users
       WHERE source IS NOT NULL GROUP BY source ORDER BY users DESC, source LIMIT ?
     `).all(limit);
+  }
+
+  sourcePerformanceStats(limit = 10) {
+    return sourcePerformanceStats(this.db, `
+      SELECT user_id, COUNT(*) AS actions FROM opens GROUP BY user_id
+    `, limit);
   }
 
   invitedCount(userId) {

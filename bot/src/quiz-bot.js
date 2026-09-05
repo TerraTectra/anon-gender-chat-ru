@@ -1,8 +1,9 @@
 import { Bot, InlineKeyboard, session } from "grammy";
-import { catalogLabel, showCatalog } from "./catalog.js";
+import { catalogLabel, createCatalogHandler } from "./catalog.js";
 import { EngagementStore } from "./engagement-store.js";
 import { PARTY_PROMPTS } from "./party-bot.js";
 import { parseStartSource } from "./tracking.js";
+import { safeErrorSummary } from "./safe-error.js";
 
 export const QUIZ_QUESTIONS = [
   { id: "venus", text: "Какая планета вращается вокруг своей оси в направлении, противоположном большинству планет?", options: ["Марс", "Венера", "Юпитер", "Меркурий"], correct: 1, explanation: "Венера вращается ретроградно: Солнце там восходит на западе." },
@@ -21,6 +22,8 @@ export const QUIZ_QUESTIONS = [
 
 function menuKeyboard() {
   return new InlineKeyboard()
+    .text("📅 Вопрос дня", "quiz:daily")
+    .row()
     .text("🧠 Новый вопрос", "quiz:next")
     .text("🏆 Мой счёт", "quiz:score")
     .row()
@@ -56,9 +59,25 @@ function questionKeyboard(question) {
   return keyboard;
 }
 
+function moscowDate(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(date);
+}
+
+export function dailyQuestionFor(date = new Date()) {
+  const key = moscowDate(date).replaceAll("-", "");
+  const index = [...key].reduce((sum, value) => sum + Number(value), 0) % QUIZ_QUESTIONS.length;
+  return QUIZ_QUESTIONS[index];
+}
+
 export function createQuizBot(token, dbPath, random = Math.random) {
   const store = new EngagementStore(dbPath);
   const bot = new Bot(token);
+  const showCatalog = createCatalogHandler("quiz");
   bot.use(session({ initial: () => ({ questionId: null, lastQuestionId: null }) }));
 
   function pickQuestion(lastQuestionId) {
@@ -76,12 +95,31 @@ export function createQuizBot(token, dbPath, random = Math.random) {
     return ctx.reply(text, options);
   }
 
+  async function sendDailyQuestion(ctx, edit = false) {
+    const question = dailyQuestionFor();
+    const text = `Вопрос дня\n\n${question.text}`;
+    const options = { reply_markup: questionKeyboard({ ...question, id: `daily_${question.id}` }) };
+    if (edit) return ctx.editMessageText(text, options);
+    return ctx.reply(text, options);
+  }
+
   async function sendScore(ctx, edit = false) {
-    const stats = store.userStats(ctx.from.id);
-    const text = `Ваш результат\n\nОтветов: ${stats.actions}\nПравильных: ${stats.score}`;
+    const stats = store.quizStats(ctx.from.id);
+    const streak = store.activityStreak(ctx.from.id);
+    const text = `Ваш результат\n\nОтветов: ${stats.actions}\nПравильных: ${stats.score}\nТекущая серия: ${streak.current} дн.\nЛучшая серия: ${streak.longest} дн.`;
     const options = { reply_markup: menuKeyboard() };
     if (edit) return ctx.editMessageText(text, options);
     return ctx.reply(text, options);
+  }
+
+  function resultKeyboard(ctx) {
+    const link = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
+    const share = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Я прошёл вопрос в Tectra Quiz. Сможешь ответить лучше?")}`;
+    return new InlineKeyboard()
+      .text("Следующий вопрос", "quiz:next")
+      .text("Мой счёт", "quiz:score")
+      .row()
+      .url("Поделиться ↗", share);
   }
 
   async function sendInvite(ctx, edit = false) {
@@ -94,10 +132,16 @@ export function createQuizBot(token, dbPath, random = Math.random) {
   }
 
   bot.command("start", async (ctx) => {
-    store.upsertUser(ctx.from.id, ctx.from.username, parseStartSource(ctx.match, ctx.from.id));
-    await ctx.reply("Tectra Quiz\n\nКороткие вопросы на кругозор. За каждый правильный ответ начисляется один балл.", { reply_markup: menuKeyboard() });
+    const source = parseStartSource(ctx.match, ctx.from.id);
+    store.upsertUser(ctx.from.id, ctx.from.username, source);
+    if (source?.includes("daily")) await sendDailyQuestion(ctx);
+    else await ctx.reply("Tectra Quiz\n\nКороткие вопросы на кругозор. За каждый правильный ответ начисляется один балл.", { reply_markup: menuKeyboard() });
   });
   bot.command("quiz", (ctx) => sendQuestion(ctx));
+  bot.command("daily", async (ctx) => {
+    store.upsertUser(ctx.from.id, ctx.from.username);
+    await sendDailyQuestion(ctx);
+  });
   bot.command("party", (ctx) => ctx.reply("Игры и вопросы для компании. Выберите режим.", { reply_markup: partyKeyboard() }));
   bot.command("score", (ctx) => sendScore(ctx));
   bot.command("invite", (ctx) => sendInvite(ctx));
@@ -108,6 +152,12 @@ export function createQuizBot(token, dbPath, random = Math.random) {
   bot.callbackQuery("quiz:next", async (ctx) => {
     await ctx.answerCallbackQuery();
     await sendQuestion(ctx, true);
+  });
+  bot.callbackQuery("quiz:daily", async (ctx) => {
+    const action = `daily_${moscowDate()}`;
+    if (store.hasAction(ctx.from.id, action)) await ctx.answerCallbackQuery("Сегодня уже отвечали");
+    else await ctx.answerCallbackQuery();
+    await sendDailyQuestion(ctx, true);
   });
   bot.callbackQuery("quiz:home", async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -136,16 +186,25 @@ export function createQuizBot(token, dbPath, random = Math.random) {
     await sendInvite(ctx, true);
   });
   bot.callbackQuery(/^quiz:answer:([a-z_]+):(\d+)$/, async (ctx) => {
-    const question = QUIZ_QUESTIONS.find((item) => item.id === ctx.match[1] && item.id === ctx.session.questionId);
+    const daily = ctx.match[1].startsWith("daily_");
+    const questionId = daily ? ctx.match[1].slice(6) : ctx.match[1];
+    const question = QUIZ_QUESTIONS.find((item) => item.id === questionId
+      && (daily ? dailyQuestionFor().id === item.id : item.id === ctx.session.questionId));
     if (!question) return ctx.answerCallbackQuery("Этот вопрос уже закрыт");
     const answer = Number(ctx.match[2]);
     const correct = answer === question.correct;
-    store.recordAction(ctx.from.id, "answer", correct ? 1 : 0);
+    if (daily) {
+      const recorded = store.recordUniqueAction(ctx.from.id, `daily_${moscowDate()}`, correct ? 1 : 0);
+      if (!recorded) return ctx.answerCallbackQuery("Сегодняшний результат уже сохранён");
+    } else {
+      store.recordAction(ctx.from.id, "answer", correct ? 1 : 0);
+    }
     ctx.session.questionId = null;
+    const streak = store.activityStreak(ctx.from.id);
     await ctx.answerCallbackQuery(correct ? "Верно!" : "Не совсем");
-    await ctx.editMessageText(`${correct ? "✅ Верно" : `❌ Правильный ответ: ${question.options[question.correct]}`}\n\n${question.explanation}`, { reply_markup: menuKeyboard() });
+    await ctx.editMessageText(`${correct ? "✅ Верно" : `❌ Правильный ответ: ${question.options[question.correct]}`}\n\n${question.explanation}\n\nСерия активности: ${streak.current} дн.`, { reply_markup: resultKeyboard(ctx) });
   });
 
-  bot.catch((error) => console.error("Quiz bot error", error.error));
+  bot.catch((error) => console.error("Quiz bot error", safeErrorSummary(error)));
   return bot;
 }

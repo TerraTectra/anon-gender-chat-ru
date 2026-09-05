@@ -68,6 +68,16 @@ export const products = [
     keywords: ["квиз", "викторина", "вопросы", "знания", "игра", "развлечение", "эрудиция"],
     tagline: "Короткие вопросы на кругозор со счётом",
     description: "Быстрые викторины с вариантами ответа, объяснениями, личным результатом и приглашениями друзей."
+  },
+  {
+    id: "party",
+    category: "entertainment",
+    name: "Tectra Party",
+    username: "TectraPartyBot",
+    icon: "🎉",
+    keywords: ["вечеринка", "компания", "правда", "действие", "крокодил", "история", "игра", "созвон"],
+    tagline: "Игры и импровизация для компании",
+    description: "Семь режимов для друзей и созвонов: вопросы, действия, пантомима, ледоколы и совместные истории."
   }
 ];
 
@@ -123,7 +133,8 @@ export const recommendationIntents = [
   { id: "english", label: "🇬🇧 Практиковать английский", productId: "english" },
   { id: "team", label: "🎮 Найти тиммейта", productId: "game" },
   { id: "money", label: "💰 Разобраться с деньгами", productId: "budget" },
-  { id: "quiz", label: "🧠 Квиз или игры для компании", productId: "quiz" }
+  { id: "quiz", label: "🧠 Проверить кругозор", productId: "quiz" },
+  { id: "party", label: "🎉 Развлечь компанию", productId: "party" }
 ];
 
 export function productLink(product, source = "src_family_catalog") {

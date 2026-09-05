@@ -1,8 +1,9 @@
 import { Bot, InlineKeyboard, Keyboard, session } from "grammy";
 import { LanguageStore } from "./language-store.js";
-import { catalogLabel, showCatalog } from "./catalog.js";
+import { catalogLabel, createCatalogHandler } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
 import { inviteKeyboard } from "./referrals.js";
+import { safeErrorSummary } from "./safe-error.js";
 
 const labels = {
   search: "🗣 Find a partner",
@@ -54,6 +55,7 @@ const profileReady = (user) => Boolean(user?.age_group && user?.level);
 export function createEnglishBot(token, dbPath) {
   const store = new LanguageStore(dbPath);
   const bot = new Bot(token);
+  const showCatalog = createCatalogHandler("english");
   bot.use(session({ initial: () => ({ pendingReportId: null }) }));
 
   bot.use(async (ctx, next) => {
@@ -224,6 +226,6 @@ export function createEnglishBot(token, dbPath) {
     await ctx.api.copyMessage(user.partner_id, ctx.chat.id, ctx.message.message_id).catch(() => store.disconnect(ctx.from.id));
   });
 
-  bot.catch((error) => console.error("English bot error", error.error));
+  bot.catch((error) => console.error("English bot error", safeErrorSummary(error)));
   return bot;
 }

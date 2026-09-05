@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { sourcePerformanceStats } from "./source-performance.js";
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -113,6 +114,13 @@ export class GameStore {
       SELECT source, COUNT(*) AS users FROM users
       WHERE source IS NOT NULL GROUP BY source ORDER BY users DESC, source LIMIT ?
     `).all(limit);
+  }
+
+  sourcePerformanceStats(limit = 10) {
+    return sourcePerformanceStats(this.db, `
+      SELECT user_id, COUNT(*) AS actions FROM events
+      WHERE type != 'start' GROUP BY user_id
+    `, limit);
   }
 
   recordEvent(userId, type) {

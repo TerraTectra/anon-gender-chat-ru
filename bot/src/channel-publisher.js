@@ -1,7 +1,23 @@
 import fs from "node:fs";
 import path from "node:path";
+import { safeErrorSummary } from "./safe-error.js";
 
 const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function sendWithRetry(api, chatId, text, options, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await api.sendMessage(chatId, text, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await delay(1_000 * attempt);
+    }
+  }
+  throw lastError;
+}
 
 function moscowParts(date) {
   const values = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
@@ -51,6 +67,15 @@ function rememberPublishedSlots(state, channelId, date, slots) {
   for (const staleDate of dates.slice(14)) delete state.publishedSlots[channelId][staleDate];
 }
 
+function composePost(channel, post, sent) {
+  const every = Number(channel.promotion?.every);
+  const promotion = channel.promotion?.text?.trim();
+  const nextSend = sent + 1;
+  if (!promotion || !Number.isInteger(every) || every < 1 || nextSend % every !== 0) return post;
+  if (/https:\/\/t\.me\//i.test(post)) return post;
+  return `${post}\n\n${promotion}`;
+}
+
 export class ChannelPublisher {
   constructor(api, configPath, statePath, now = () => new Date()) {
     this.api = api;
@@ -78,10 +103,11 @@ export class ChannelPublisher {
         publishedSlots: parsed.publishedSlots || {},
         cursors: parsed.cursors || {},
         sent: parsed.sent || {},
-        lastPublishedAt: parsed.lastPublishedAt || {}
+        lastPublishedAt: parsed.lastPublishedAt || {},
+        errors: parsed.errors || {}
       };
     } catch {
-      return { published: {}, publishedSlots: {}, cursors: {}, sent: {}, lastPublishedAt: {} };
+      return { published: {}, publishedSlots: {}, cursors: {}, sent: {}, lastPublishedAt: {}, errors: {} };
     }
   }
 
@@ -94,14 +120,17 @@ export class ChannelPublisher {
 
   async publishChannel(channel, state, date, completedSlots) {
     const cursor = Number(state.cursors[channel.id] || 0) % channel.posts.length;
-    await this.api.sendMessage(channel.chatId, channel.posts[cursor], {
+    const sent = Number(state.sent[channel.id] || 0);
+    const api = typeof this.api === "function" ? this.api(channel) : this.api;
+    await sendWithRetry(api, channel.chatId, composePost(channel, channel.posts[cursor], sent), {
       link_preview_options: { is_disabled: true }
     });
     state.published[channel.id] = moscowParts(date).date;
     rememberPublishedSlots(state, channel.id, moscowParts(date).date, completedSlots);
     state.cursors[channel.id] = (cursor + 1) % channel.posts.length;
-    state.sent[channel.id] = Number(state.sent[channel.id] || 0) + 1;
+    state.sent[channel.id] = sent + 1;
     state.lastPublishedAt[channel.id] = date.toISOString();
+    delete state.errors[channel.id];
     this.saveState(state);
     return channel.id;
   }
@@ -122,7 +151,16 @@ export class ChannelPublisher {
       if (!due.length) continue;
 
       for (const slot of due) completed.add(slot);
-      published.push(await this.publishChannel(channel, state, date, [...completed]));
+      try {
+        published.push(await this.publishChannel(channel, state, date, [...completed]));
+      } catch (error) {
+        state.errors[channel.id] = {
+          at: date.toISOString(),
+          message: safeErrorSummary(error)
+        };
+        this.saveState(state);
+        console.error(`Channel publisher failed for ${channel.id}`, safeErrorSummary(error));
+      }
     }
     return published;
   }
@@ -152,10 +190,12 @@ export class ChannelPublisher {
       chatId: channel.chatId,
       enabled: Boolean(channel.enabled),
       schedule: channelSchedules(channel).join(", "),
+      promotionEvery: Number(channel.promotion?.every) || null,
       days: channel.days || WEEKDAYS,
       queued: channel.posts?.length || 0,
       sent: Number(state.sent[channel.id] || 0),
-      lastPublishedAt: state.lastPublishedAt[channel.id] || null
+      lastPublishedAt: state.lastPublishedAt[channel.id] || null,
+      lastError: state.errors[channel.id] || null
     }));
   }
 
@@ -171,9 +211,9 @@ export class ChannelPublisher {
 
   start(intervalMs = 60_000) {
     if (this.timer) return;
-    this.tick().catch((error) => console.error("Channel publisher error", error));
+    this.tick().catch((error) => console.error("Channel publisher error", safeErrorSummary(error)));
     this.timer = setInterval(() => {
-      this.tick().catch((error) => console.error("Channel publisher error", error));
+      this.tick().catch((error) => console.error("Channel publisher error", safeErrorSummary(error)));
     }, intervalMs);
   }
 

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { sourcePerformanceStats } from "./source-performance.js";
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -50,10 +51,66 @@ export class EngagementStore {
     this.db.prepare("INSERT INTO actions (user_id, type, points) VALUES (?, ?, ?)").run(userId, type, points);
   }
 
+  recordUniqueAction(userId, type, points = 0) {
+    return this.db.prepare(`
+      INSERT INTO actions (user_id, type, points)
+      SELECT ?, ?, ? WHERE NOT EXISTS (
+        SELECT 1 FROM actions WHERE user_id = ? AND type = ?
+      )
+    `).run(userId, type, points, userId, type).changes === 1;
+  }
+
+  hasAction(userId, type) {
+    return Boolean(this.db.prepare("SELECT 1 FROM actions WHERE user_id = ? AND type = ?").get(userId, type));
+  }
+
+  activityStreak(userId, now = new Date()) {
+    const days = this.db.prepare(`
+      SELECT DISTINCT date(created_at, '+3 hours') AS day
+      FROM actions WHERE user_id = ? ORDER BY day DESC
+    `).all(userId).map((row) => row.day);
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Moscow",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(now);
+    const before = (day) => new Date(Date.parse(`${day}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+    let longest = 0;
+    let run = 0;
+    let previous = null;
+    for (const day of [...days].reverse()) {
+      run = previous && before(day) === previous ? run + 1 : 1;
+      longest = Math.max(longest, run);
+      previous = day;
+    }
+    const latest = days[0];
+    const currentEligible = latest === today || latest === before(today);
+    let current = 0;
+    if (currentEligible) {
+      let expected = latest;
+      for (const day of days) {
+        if (day !== expected) break;
+        current += 1;
+        expected = before(expected);
+      }
+    }
+    return { current, longest, activeToday: latest === today };
+  }
+
   userStats(userId) {
     const row = this.db.prepare(`
       SELECT COUNT(*) AS actions, COALESCE(SUM(points), 0) AS score
       FROM actions WHERE user_id = ?
+    `).get(userId);
+    return { actions: row.actions, score: row.score };
+  }
+
+  quizStats(userId) {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS actions, COALESCE(SUM(points), 0) AS score
+      FROM actions
+      WHERE user_id = ? AND (type = 'answer' OR type LIKE 'daily_%')
     `).get(userId);
     return { actions: row.actions, score: row.score };
   }
@@ -67,6 +124,12 @@ export class EngagementStore {
       SELECT source, COUNT(*) AS users FROM users
       WHERE source IS NOT NULL GROUP BY source ORDER BY users DESC, source LIMIT ?
     `).all(limit);
+  }
+
+  sourcePerformanceStats(limit = 10) {
+    return sourcePerformanceStats(this.db, `
+      SELECT user_id, COUNT(*) AS actions FROM actions GROUP BY user_id
+    `, limit);
   }
 
   stats() {

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { sourcePerformanceStats } from "./source-performance.js";
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -84,6 +85,12 @@ export class BudgetStore {
       SELECT source, COUNT(*) AS users FROM users
       WHERE source IS NOT NULL GROUP BY source ORDER BY users DESC, source LIMIT ?
     `).all(limit);
+  }
+
+  sourcePerformanceStats(limit = 10) {
+    return sourcePerformanceStats(this.db, `
+      SELECT user_id, COUNT(*) AS actions FROM entries GROUP BY user_id
+    `, limit);
   }
 
   addEntry(userId, type, amountCents, category, note, createdAt = Math.floor(Date.now() / 1000)) {

@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ageGroup, queuesAreCompatible } from "./matching.js";
+import { sourcePerformanceStats } from "./source-performance.js";
+import { ChatSessionArchive } from "./chat-session-archive.js";
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -72,15 +74,98 @@ CREATE INDEX IF NOT EXISTS idx_events_type_date ON events(type, created_at);
 `;
 
 export class Store {
-  constructor(filename) {
+  constructor(filename, options = {}) {
     const absolute = path.resolve(filename);
     fs.mkdirSync(path.dirname(absolute), { recursive: true });
     this.db = new DatabaseSync(absolute);
     this.db.exec(SCHEMA);
+    const archiveRoot = path.resolve(
+      options.sessionArchiveRoot || path.join(path.dirname(absolute), `${path.basename(absolute, path.extname(absolute))}-session-archive`)
+    );
+    this.sessionArchive = new ChatSessionArchive(archiveRoot);
+    this.purgeExpiredChatSessions();
+    this.reconcileLegacyActivePairs();
   }
 
   close() {
+    this.sessionArchive.close();
     this.db.close();
+  }
+
+  activePairs() {
+    return this.db.prepare(`
+      SELECT left_user.id AS user_a_id, right_user.id AS user_b_id
+      FROM users left_user
+      JOIN users right_user ON right_user.id = left_user.partner_id
+      WHERE left_user.id < right_user.id
+        AND right_user.partner_id = left_user.id
+    `).all();
+  }
+
+  reconcileLegacyActivePairs(now = Date.now()) {
+    return this.sessionArchive.reconcileActivePairs(
+      this.activePairs().map((pair) => ({ userAId: pair.user_a_id, userBId: pair.user_b_id })),
+      now
+    );
+  }
+
+  #participant(userId) {
+    const user = this.getUser(userId);
+    if (!user) return { id: userId, username: null, gender: null, age: null };
+    return { id: user.id, username: user.username, gender: user.gender, age: user.age };
+  }
+
+  #withParticipants(session) {
+    if (!session) return null;
+    return {
+      ...session,
+      participants: [this.#participant(session.user_a_id), this.#participant(session.user_b_id)]
+    };
+  }
+
+  listActiveChatSessions(options = {}) {
+    const result = this.sessionArchive.listActive(options);
+    return { ...result, items: result.items.map((session) => this.#withParticipants(session)) };
+  }
+
+  listRetainedChatSessions(options = {}) {
+    const result = this.sessionArchive.listRetained(options);
+    return { ...result, items: result.items.map((session) => this.#withParticipants(session)) };
+  }
+
+  getChatSession(sessionId, now = Date.now()) {
+    return this.#withParticipants(this.sessionArchive.getSession(sessionId, now));
+  }
+
+  listChatSessionMedia(sessionId, options = {}) {
+    return this.sessionArchive.listMedia(sessionId, options);
+  }
+
+  resolveChatSessionMedia(mediaId, now = Date.now()) {
+    return this.sessionArchive.resolveMediaPath(mediaId, now);
+  }
+
+  touchChatSession(userId, now = Date.now()) {
+    return this.sessionArchive.touchByUser(userId, now);
+  }
+
+  beginChatMedia(userId, media, now = Date.now()) {
+    const user = this.getUser(userId);
+    if (!user?.partner_id) return null;
+    this.sessionArchive.ensureActiveSession(userId, user.partner_id, now);
+    return this.sessionArchive.beginMedia(userId, media, now);
+  }
+
+  completeChatMedia(mediaId, bytes, extension, mimeType = null) {
+    return this.sessionArchive.completeMedia(mediaId, bytes, extension, mimeType);
+  }
+
+  failChatMedia(mediaId, errorCode) {
+    return this.sessionArchive.failMedia(mediaId, errorCode);
+  }
+
+  purgeExpiredChatSessions(now = Date.now()) {
+    return this.sessionArchive.purgeExpired(now);
   }
 
   upsertUser(id, username, source = null) {
@@ -128,6 +213,13 @@ export class Store {
     `).all(limit);
   }
 
+  sourcePerformanceStats(limit = 10) {
+    return sourcePerformanceStats(this.db, `
+      SELECT user_id, COUNT(*) AS actions FROM events
+      WHERE type != 'start' GROUP BY user_id
+    `, limit);
+  }
+
   recordEvent(userId, type) {
     this.db.prepare("INSERT INTO events (user_id, type) VALUES (?, ?)").run(userId, type);
   }
@@ -162,7 +254,7 @@ export class Store {
       return { status: "limit" };
     }
 
-    this.disconnect(userId);
+    this.disconnect(userId, "new_search");
     this.db.prepare(`
       INSERT OR REPLACE INTO queue (user_id, mode, target_gender, min_age, max_age, created_at)
       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -228,6 +320,11 @@ export class Store {
       if (ownQueue.mode === "filtered") this.incrementFiltered(userId);
       if (match.q_mode === "filtered") this.incrementFiltered(match.id);
       this.db.exec("COMMIT");
+      try {
+        this.sessionArchive.ensureActiveSession(userId, match.id);
+      } catch (error) {
+        console.error("Chat session start failed", error instanceof Error ? error.message : String(error));
+      }
       return { status: "matched", partnerId: match.id };
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -235,12 +332,17 @@ export class Store {
     }
   }
 
-  disconnect(userId) {
+  disconnect(userId, reason = "ended", now = Date.now()) {
     const user = this.getUser(userId);
     this.db.prepare("DELETE FROM queue WHERE user_id = ?").run(userId);
     this.db.prepare("UPDATE users SET partner_id = NULL, state = 'idle' WHERE id = ?").run(userId);
     if (user?.partner_id) {
       this.db.prepare("UPDATE users SET partner_id = NULL, state = 'idle' WHERE id = ?").run(user.partner_id);
+      try {
+        this.sessionArchive.endByUser(userId, reason, now);
+      } catch (error) {
+        console.error("Chat session close failed", error instanceof Error ? error.message : String(error));
+      }
     }
     return user?.partner_id ?? null;
   }
@@ -248,7 +350,7 @@ export class Store {
   reportAndBlock(reporterId, reportedId) {
     this.db.prepare("INSERT OR IGNORE INTO blocks (user_id, blocked_user_id) VALUES (?, ?)").run(reporterId, reportedId);
     this.db.prepare("INSERT INTO reports (reporter_id, reported_id) VALUES (?, ?)").run(reporterId, reportedId);
-    this.disconnect(reporterId);
+    this.disconnect(reporterId, "report");
   }
 
   isBanned(userId) {
@@ -256,7 +358,7 @@ export class Store {
   }
 
   banUser(userId) {
-    this.disconnect(userId);
+    this.disconnect(userId, "admin_ban");
     this.db.prepare("INSERT OR IGNORE INTO bans (user_id) VALUES (?)").run(userId);
   }
 

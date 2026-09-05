@@ -2,12 +2,14 @@ import { Bot, InlineKeyboard, session } from "grammy";
 import { HubStore } from "./hub-store.js";
 import { categories, channelLink, contentChannels, productLink, products, productsByCategory, recommendationIntents, searchProducts } from "./products.js";
 import { parseStartSource } from "./tracking.js";
+import { safeErrorSummary } from "./safe-error.js";
 
 function homeKeyboard() {
-  const keyboard = new InlineKeyboard();
+  const keyboard = new InlineKeyboard()
+    .text("✨ Подобрать за меня", "hub:recommend")
+    .row();
   for (const category of categories) keyboard.text(category.label, `hub:category:${category.id}`).row();
   return keyboard
-    .text("✨ Подобрать за меня", "hub:recommend")
     .text("📚 Все боты", "hub:category:all")
     .row()
     .text("🔥 Популярное", "hub:popular")
@@ -43,12 +45,12 @@ const leadDeadlineKeyboard = new InlineKeyboard()
   .row()
   .text("Отмена", "hub:home");
 
-function productKeyboard(items, source = "category") {
+export function productKeyboard(items, source = "category") {
   const keyboard = new InlineKeyboard();
   for (const product of items) {
     keyboard
       .text(`${product.icon} ${product.name}`, `hub:product:${product.id}:${source}`)
-      .url("Открыть ↗", productLink(product, "src_hub"))
+      .url("Открыть ↗", productLink(product, `src_hub_${source}`))
       .row();
   }
   return keyboard.text("← В главное меню", "hub:home");
@@ -112,13 +114,20 @@ export function createHubBot(token, dbPath) {
     return ctx.reply(text, options);
   }
 
+  async function showQuickStart(ctx) {
+    return ctx.reply("Добро пожаловать в TerraTectra Bots.\n\nЧто хотите сделать прямо сейчас?", {
+      reply_markup: recommendationKeyboard()
+    });
+  }
+
   bot.command("start", async (ctx) => {
     const source = parseStartSource(ctx.match, ctx.from.id);
-    store.upsertUser(ctx.from.id, ctx.from.username, source);
+    const user = store.upsertUser(ctx.from.id, ctx.from.username, source);
     ctx.session.startSource = source;
     ctx.session.waitingSuggestion = false;
     ctx.session.waitingSearch = false;
     if (source?.includes("lead")) await startLead(ctx);
+    else if (user.isNew) await showQuickStart(ctx);
     else await showHome(ctx);
   });
   bot.command("catalog", (ctx) => showHome(ctx));
@@ -329,6 +338,6 @@ export function createHubBot(token, dbPath) {
     await ctx.reply("Спасибо. Идея сохранена и попадёт в список кандидатов на следующий бот.", { reply_markup: homeKeyboard() });
   });
 
-  bot.catch((error) => console.error("Hub bot error", error.error));
+  bot.catch((error) => console.error("Hub bot error", safeErrorSummary(error)));
   return bot;
 }

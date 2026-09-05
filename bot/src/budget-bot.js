@@ -1,8 +1,9 @@
 import { Bot, InlineKeyboard, InputFile, Keyboard, session } from "grammy";
 import { BudgetStore } from "./budget-store.js";
-import { catalogLabel, showCatalog } from "./catalog.js";
+import { catalogLabel, createCatalogHandler } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
 import { inviteKeyboard } from "./referrals.js";
+import { safeErrorSummary } from "./safe-error.js";
 
 const labels = {
   expense: "➖ Расход",
@@ -95,6 +96,7 @@ function csvEscape(value) {
 export function createBudgetBot(token, dbPath) {
   const store = new BudgetStore(dbPath);
   const bot = new Bot(token);
+  const showCatalog = createCatalogHandler("budget");
   bot.use(session({ initial: () => ({ entryType: null, pendingEntry: null, waitingLimit: false }) }));
 
   bot.use(async (ctx, next) => {
@@ -289,7 +291,7 @@ export function createBudgetBot(token, dbPath) {
     await ctx.reply("Выберите категорию.", { reply_markup: keyboard });
   });
 
-  bot.catch((error) => console.error("Budget bot error", error.error));
+  bot.catch((error) => console.error("Budget bot error", safeErrorSummary(error)));
   return bot;
 }
 
