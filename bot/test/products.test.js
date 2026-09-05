@@ -30,11 +30,9 @@ test("recommendation intents point to existing products", () => {
   assert.ok(recommendationIntents.every((intent) => productIds.has(intent.productId)));
 });
 
-test("legacy entertainment channels still have valid tracked promotions until channel strategy is rebuilt", () => {
+test("stale legacy channel automation is paused after the bot lineup rebuild", () => {
   const config = JSON.parse(fs.readFileSync(new URL("../content/channels.json", import.meta.url), "utf8"));
   const channels = Object.fromEntries(config.channels.map((channel) => [channel.id, channel]));
-  assert.match(channels.fun.promotion.text, /TectraPartyBot\?start=src_channel_fun_daily$/);
-  assert.match(channels.quiz.promotion.text, /TectraQuizBot\?start=src_channel_quiz_daily$/);
-  assert.ok(channels.fun.schedule.length >= 4);
-  assert.ok(channels.quiz.schedule.length >= 3);
+  assert.equal(channels.ai.enabled, true);
+  for (const id of ["focus", "money", "fun", "quiz"]) assert.equal(channels[id].enabled, false);
 });

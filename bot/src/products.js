@@ -32,7 +32,7 @@ export const products = [
   {
     id: "game",
     category: "social",
-    name: "Tectra Meet 18+",
+    name: "Tectra Meet",
     username: "GameMateFinderRuBot",
     icon: "💞",
     keywords: ["знакомства", "дейтинг", "люди", "город", "интересы", "пара", "встреча", "18+"],
