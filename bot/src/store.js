@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS events (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS bot_access (
+  user_id INTEGER PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'blocked')),
+  last_inbound_at TEXT,
+  last_successful_delivery_at TEXT,
+  blocked_at TEXT,
+  block_reason TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_queue_created ON queue(created_at);
 CREATE INDEX IF NOT EXISTS idx_reports_reviewed ON reports(reviewed_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_type_date ON events(type, created_at);
@@ -224,6 +234,68 @@ export class Store {
     this.db.prepare("INSERT INTO events (user_id, type) VALUES (?, ?)").run(userId, type);
   }
 
+  markUserActive(userId) {
+    this.db.prepare(`
+      INSERT INTO bot_access (user_id, status, last_inbound_at, blocked_at, block_reason, updated_at)
+      VALUES (?, 'active', CURRENT_TIMESTAMP, NULL, NULL, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id) DO UPDATE SET
+        status = 'active',
+        last_inbound_at = CURRENT_TIMESTAMP,
+        blocked_at = NULL,
+        block_reason = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(userId);
+  }
+
+  markDeliverySuccess(userId) {
+    this.db.prepare(`
+      INSERT INTO bot_access (user_id, status, last_successful_delivery_at, updated_at)
+      VALUES (?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id) DO UPDATE SET
+        status = 'active',
+        last_successful_delivery_at = CURRENT_TIMESTAMP,
+        blocked_at = NULL,
+        block_reason = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(userId);
+  }
+
+  markBotBlocked(userId, reason = "blocked_by_user") {
+    this.db.prepare(`
+      INSERT INTO bot_access (user_id, status, blocked_at, block_reason, updated_at)
+      VALUES (?, 'blocked', CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id) DO UPDATE SET
+        status = 'blocked',
+        blocked_at = CURRENT_TIMESTAMP,
+        block_reason = excluded.block_reason,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(userId, String(reason).slice(0, 160));
+  }
+
+  accessStats() {
+    const countActiveSince = (modifier) => Number(this.db.prepare(`
+      SELECT COUNT(DISTINCT recent.user_id) AS count
+      FROM (
+        SELECT user_id FROM bot_access WHERE last_inbound_at >= datetime('now', ?)
+        UNION
+        SELECT user_id FROM events WHERE created_at >= datetime('now', ?)
+      ) recent
+      LEFT JOIN bot_access access ON access.user_id = recent.user_id
+      WHERE COALESCE(access.status, 'active') != 'blocked'
+    `).get(modifier, modifier).count);
+    const blocked = Number(this.db.prepare("SELECT COUNT(*) AS count FROM bot_access WHERE status = 'blocked'").get().count);
+    const reachable = Number(this.db.prepare("SELECT COUNT(*) AS count FROM bot_access WHERE status = 'active'").get().count);
+    const users = Number(this.db.prepare("SELECT COUNT(*) AS count FROM users").get().count);
+    return {
+      blocked,
+      reachable,
+      unknown: Math.max(0, users - blocked - reachable),
+      active24h: countActiveSince("-1 day"),
+      active7: countActiveSince("-7 days"),
+      active30: countActiveSince("-30 days")
+    };
+  }
+
   growthStats() {
     const eventCount = (type) => this.db.prepare(`
       SELECT COUNT(*) AS count FROM events WHERE type = ? AND created_at >= datetime('now', '-7 days')
@@ -376,7 +448,8 @@ export class Store {
       searching: this.db.prepare("SELECT COUNT(*) AS count FROM queue").get().count,
       chatting: this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE partner_id IS NOT NULL").get().count / 2,
       reports: this.db.prepare("SELECT COUNT(*) AS count FROM reports WHERE reviewed_at IS NULL").get().count,
-      banned: this.db.prepare("SELECT COUNT(*) AS count FROM bans").get().count
+      banned: this.db.prepare("SELECT COUNT(*) AS count FROM bans").get().count,
+      ...this.accessStats()
     };
   }
 

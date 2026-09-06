@@ -16,7 +16,13 @@ import {
 const profileReady = (user) => Boolean(user?.gender && user?.age);
 const displayGender = (value) => value === "male" ? "парень" : "девушка";
 const TELEGRAM_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024;
-const MEDIA_RETENTION_NOTICE = "Для модерации сессии с 6 и более фото, видео или кружками сохраняют эти вложения до 7 суток после завершения. Текст переписки не сохраняется.";
+const MEDIA_RETENTION_NOTICE = "Для модерации любой чат, где отправлялись фото, видео или кружки, попадает в защищённый архив на срок до 7 суток после завершения. Текст переписки не сохраняется.";
+
+export function isBotBlockedByUserError(error) {
+  const code = Number(error?.error_code ?? error?.error?.error_code ?? error?.response?.error_code ?? 0);
+  const description = String(error?.description ?? error?.error?.description ?? error?.response?.description ?? error?.message ?? "");
+  return code === 403 && /bot was blocked by the user/i.test(description);
+}
 
 export function retainedMediaFromMessage(message) {
   if (message?.photo?.length) {
@@ -78,18 +84,37 @@ export function createUserBot(token, dbPath, options = {}) {
   bot.use(session({ initial: () => ({ step: null, pendingReportId: null }) }));
 
   bot.use(async (ctx, next) => {
-    if (ctx.from && store.isBanned(ctx.from.id)) {
-      if (ctx.message?.text === "/start") {
-        await ctx.reply("Ваш доступ к анонимному чату ограничен администрацией.");
+    if (ctx.from) {
+      const knownUser = store.getUser(ctx.from.id);
+      if (knownUser) store.markUserActive(ctx.from.id);
+      if (store.isBanned(ctx.from.id)) {
+        if (ctx.message?.text === "/start") {
+          await ctx.reply("Ваш доступ к анонимному чату ограничен администрацией.");
+        }
+        return;
       }
-      return;
     }
     await next();
   });
 
+  function noteDeliveryFailure(userId, error) {
+    if (isBotBlockedByUserError(error)) {
+      store.markBotBlocked(userId, "bot_was_blocked_by_user");
+      return true;
+    }
+    return false;
+  }
+
   async function notifyPartner(ctx, partnerId, text, replyMarkup = menuKeyboard) {
-    if (!partnerId) return;
-    await ctx.api.sendMessage(partnerId, text, { reply_markup: replyMarkup }).catch(() => {});
+    if (!partnerId) return false;
+    try {
+      await ctx.api.sendMessage(partnerId, text, { reply_markup: replyMarkup });
+      store.markDeliverySuccess(partnerId);
+      return true;
+    } catch (error) {
+      noteDeliveryFailure(partnerId, error);
+      return false;
+    }
   }
 
   async function archiveRetainedMedia(ctx, media) {
@@ -156,7 +181,12 @@ export function createUserBot(token, dbPath, options = {}) {
       store.recordEvent(ctx.from.id, "match");
       const message = "Собеседник найден. Можно писать сообщение.";
       await ctx.reply(message, { reply_markup: menuKeyboard });
-      await ctx.api.sendMessage(result.partnerId, message, { reply_markup: menuKeyboard }).catch(() => {});
+      try {
+        await ctx.api.sendMessage(result.partnerId, message, { reply_markup: menuKeyboard });
+        store.markDeliverySuccess(result.partnerId);
+      } catch (error) {
+        noteDeliveryFailure(result.partnerId, error);
+      }
     } else {
       await ctx.reply("Ищу собеседника. Напишу, как только появится подходящая пара.", { reply_markup: menuKeyboard });
     }
@@ -165,6 +195,7 @@ export function createUserBot(token, dbPath, options = {}) {
   bot.command("start", async (ctx) => {
     const source = parseStartSource(ctx.match, ctx.from.id);
     const user = store.upsertUser(ctx.from.id, ctx.from.username, source);
+    store.markUserActive(ctx.from.id);
     store.recordEvent(ctx.from.id, "start");
     if (!profileReady(user)) {
       ctx.session.step = "gender";
@@ -263,7 +294,7 @@ export function createUserBot(token, dbPath, options = {}) {
   async function showStats(ctx) {
     const stats = store.stats();
     await ctx.reply(
-      `Сейчас в поиске: ${stats.searching}.\nАктивных чатов: ${stats.chatting}.\nПользователей: ${stats.users}.`,
+      `Сейчас в поиске: ${stats.searching}.\nАктивных чатов: ${stats.chatting}.\nАктивны за 7 дней: ${stats.active7}.\nПодтверждённо доступны боту: ${stats.reachable}.\nЗаблокировали бота: ${stats.blocked}.\nСтатус ещё не проверен: ${stats.unknown}.\nВсего зарегистрировано: ${stats.users}.`,
       { reply_markup: menuKeyboard }
     );
   }
@@ -332,7 +363,9 @@ export function createUserBot(token, dbPath, options = {}) {
     }
     try {
       await ctx.api.copyMessage(user.partner_id, ctx.chat.id, ctx.message.message_id);
-    } catch {
+      store.markDeliverySuccess(user.partner_id);
+    } catch (error) {
+      noteDeliveryFailure(user.partner_id, error);
       store.disconnect(ctx.from.id, "delivery_failed");
       await ctx.reply("Не удалось доставить сообщение. Возможно, собеседник заблокировал бота.", { reply_markup: menuKeyboard });
       return;
@@ -352,7 +385,9 @@ export function createUserBot(token, dbPath, options = {}) {
     }
     try {
       await ctx.api.copyMessage(user.partner_id, ctx.chat.id, ctx.message.message_id);
-    } catch {
+      store.markDeliverySuccess(user.partner_id);
+    } catch (error) {
+      noteDeliveryFailure(user.partner_id, error);
       store.disconnect(ctx.from.id, "delivery_failed");
       await ctx.reply("Не удалось доставить сообщение.", { reply_markup: menuKeyboard });
       return;

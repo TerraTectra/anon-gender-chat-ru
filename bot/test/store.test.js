@@ -108,3 +108,14 @@ test("referral counts are tied to the original inviter", () => {
     assert.equal(store.growthStats().searches7, 1);
   });
 });
+
+
+test("store tracks bot blocks and real activity separately from registrations", () => {
+  withStore((store) => {
+    store.upsertUser(1, "active"); store.upsertUser(2, "blocked"); store.upsertUser(3, "registered-only");
+    store.markUserActive(1); store.markUserActive(2); store.markBotBlocked(2, "bot_was_blocked_by_user");
+    const stats=store.stats();
+    assert.equal(stats.users,3); assert.equal(stats.blocked,1); assert.equal(stats.reachable,1); assert.equal(stats.unknown,1); assert.equal(stats.active24h,1); assert.equal(stats.active7,1); assert.equal(stats.active30,1);
+    store.markUserActive(2); const after=store.stats(); assert.equal(after.blocked,0); assert.equal(after.reachable,2); assert.equal(after.unknown,1);
+  });
+});

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const MEDIA_RETENTION_THRESHOLD = 5;
+export const MEDIA_RETENTION_THRESHOLD = 0;
 export const MEDIA_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const MEDIA_KINDS = new Set(["photo", "video", "video_note"]);

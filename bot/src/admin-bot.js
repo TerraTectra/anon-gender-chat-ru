@@ -18,7 +18,10 @@ function parseAdmins(value = "") {
 }
 
 function statsText(stats) {
-  return `Пользователей: ${stats.users}\nИщут: ${stats.searching}\nАктивных чатов: ${stats.chatting}\nНовых жалоб: ${stats.reports}\nЗаблокировано: ${stats.banned}`;
+  const access = Number.isFinite(Number(stats.blocked))
+    ? `\nПодтверждённо доступны боту: ${stats.reachable}\nЗаблокировали бота: ${stats.blocked}\nСтатус не проверен: ${stats.unknown}\nАктивны за 24 часа: ${stats.active24h}\nАктивны за 7 дней: ${stats.active7}\nАктивны за 30 дней: ${stats.active30}`
+    : "";
+  return `Пользователи: ${stats.users}${access}\nИщут: ${stats.searching}\nАктивные чаты: ${stats.chatting}\nНовые жалобы: ${stats.reports}\nЗабанены админом: ${stats.banned}`;
 }
 
 const SESSION_PAGE_SIZE = 8;

@@ -57,20 +57,20 @@ test("a match creates one visible active chat session without changing the match
   }
 });
 
-test("five retained media items are staged only while active and deleted on close", () => {
+test("a single media item retains the ended session for seven days", () => {
   const fixture = createFixture();
   try {
-    for (let index = 1; index <= 5; index += 1) addMedia(fixture.store, index, index % 2 ? 1 : 2);
-    assert.equal(fixture.store.listActiveChatSessions().items[0].media_count, 5);
-    assert.equal(fs.readdirSync(path.join(fixture.archiveRoot, "files")).length, 5);
-
-    assert.equal(fixture.store.disconnect(1, "stop", 10_000), 2);
+    addMedia(fixture.store, 1);
+    assert.equal(fixture.store.listActiveChatSessions().items[0].media_count, 1);
+    assert.equal(fs.readdirSync(path.join(fixture.archiveRoot, "files")).length, 1);
+    const endedAt = 10_000;
+    assert.equal(fixture.store.disconnect(1, "stop", endedAt), 2);
     assert.equal(fixture.store.listActiveChatSessions().total, 0);
-    assert.equal(fixture.store.listRetainedChatSessions({ now: 10_001 }).total, 0);
-    assert.equal(fs.readdirSync(path.join(fixture.archiveRoot, "files")).length, 0);
-  } finally {
-    fixture.cleanup();
-  }
+    const retained = fixture.store.listRetainedChatSessions({ now: endedAt + 1 });
+    assert.equal(retained.total, 1);
+    assert.equal(retained.items[0].media_count, 1);
+    assert.equal(retained.items[0].expires_at_ms, endedAt + MEDIA_RETENTION_MS);
+  } finally { fixture.cleanup(); }
 });
 
 test("the sixth mixed media item retains the ended session for exactly seven days", () => {
