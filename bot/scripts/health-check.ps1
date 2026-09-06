@@ -22,12 +22,6 @@ if (Test-Path -LiteralPath $healthPath) {
 }
 
 if ($stale) {
-  "[$(Get-Date -Format o)] Health file is stale; restarting bot task." | Out-File -FilePath $logPath -Append -Encoding utf8
-  Stop-ScheduledTask -TaskName "AnonGenderChatBot" -ErrorAction SilentlyContinue
-  for ($attempt = 0; $attempt -lt 30; $attempt += 1) {
-    $state = (Get-ScheduledTask -TaskName "AnonGenderChatBot" -ErrorAction SilentlyContinue).State
-    if ($state -ne "Running") { break }
-    Start-Sleep -Seconds 1
-  }
-  Start-ScheduledTask -TaskName "AnonGenderChatBot"
+  "[$(Get-Date -Format o)] Health file is stale; starting production runner directly." | Out-File -FilePath $logPath -Append -Encoding utf8
+  Start-Process powershell.exe -WindowStyle Hidden -WorkingDirectory $root -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $root 'run-background.ps1'))
 }

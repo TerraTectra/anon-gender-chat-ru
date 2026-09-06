@@ -113,14 +113,24 @@ function writeHealth(status = healthStatus, details = {}) {
   healthStatus = status;
   fs.mkdirSync(path.dirname(healthPath), { recursive: true });
   const temporary = `${healthPath}.tmp`;
-  fs.writeFileSync(temporary, JSON.stringify({
+  const payload = JSON.stringify({
     status,
     updated_at: new Date().toISOString(),
     bots: botCount,
     channels: channelPublisher.status().filter((channel) => channel.enabled).length,
     ...details
-  }, null, 2));
-  fs.renameSync(temporary, healthPath);
+  }, null, 2);
+  try {
+    fs.writeFileSync(temporary, payload);
+    fs.renameSync(temporary, healthPath);
+  } catch (error) {
+    try {
+      fs.writeFileSync(healthPath, payload);
+    } catch (fallbackError) {
+      console.error(`Health write failed: ${fallbackError?.code || "unknown"}`);
+    }
+    try { fs.rmSync(temporary, { force: true }); } catch { }
+  }
 }
 writeHealth("starting");
 const healthTimer = setInterval(() => writeHealth(), 30_000);
