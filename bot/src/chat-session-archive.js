@@ -4,8 +4,10 @@ import { DatabaseSync } from "node:sqlite";
 
 export const MEDIA_RETENTION_THRESHOLD = 0;
 export const MEDIA_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+export const CHAT_INACTIVITY_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 const MEDIA_KINDS = new Set(["photo", "video", "video_note"]);
+const MESSAGE_KINDS = new Set(["text", "photo", "video", "voice", "video_note", "document", "sticker", "animation"]);
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -53,10 +55,38 @@ CREATE TABLE IF NOT EXISTS chat_session_media (
   UNIQUE(source_chat_id, source_message_id)
 );
 
+CREATE TABLE IF NOT EXISTS chat_session_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  sender_id INTEGER NOT NULL,
+  source_chat_id INTEGER NOT NULL,
+  source_message_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  text TEXT,
+  caption TEXT,
+  file_id TEXT,
+  file_unique_id TEXT,
+  file_name TEXT,
+  sticker_emoji TEXT,
+  media_group_id TEXT,
+  file_size INTEGER,
+  mime_type TEXT,
+  media_id INTEGER REFERENCES chat_session_media(id) ON DELETE SET NULL,
+  storage_status TEXT NOT NULL DEFAULT 'none'
+    CHECK (storage_status IN ('none', 'pending', 'linked', 'stored', 'unavailable')),
+  local_path TEXT,
+  storage_error TEXT,
+  reply_to_source_message_id INTEGER,
+  created_at_ms INTEGER NOT NULL,
+  UNIQUE(source_chat_id, source_message_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_active_session_id
   ON active_chat_session_members(session_id);
 CREATE INDEX IF NOT EXISTS idx_session_media
   ON chat_session_media(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_session_messages
+  ON chat_session_messages(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_sessions_retention
   ON chat_sessions(expires_at_ms);
 `;
@@ -114,6 +144,17 @@ export class ChatSessionArchive {
       SELECT local_path FROM chat_session_media
       WHERE session_id = ? AND local_path IS NOT NULL
     `).all(sessionId).map((row) => row.local_path);
+  }
+
+  #messagePaths(sessionId) {
+    return this.db.prepare(`
+      SELECT local_path FROM chat_session_messages
+      WHERE session_id = ? AND local_path IS NOT NULL
+    `).all(sessionId).map((row) => row.local_path);
+  }
+
+  #allFilePaths(sessionId) {
+    return [...new Set([...this.#mediaPaths(sessionId), ...this.#messagePaths(sessionId)])];
   }
 
   #endSessionInsideTransaction(sessionId, reason, now) {
@@ -221,6 +262,37 @@ export class ChatSessionArchive {
     return this.#finishSessions([row.session_id], reason, now)[0] || null;
   }
 
+  endSession(sessionId, reason = "ended", now = Date.now()) {
+    return this.#finishSessions([sessionId], reason, now)[0] || null;
+  }
+
+  deleteSession(sessionId) {
+    const session = this.db.prepare("SELECT * FROM chat_sessions WHERE id = ?").get(sessionId);
+    if (!session) return null;
+    const paths = this.#allFilePaths(sessionId);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("DELETE FROM active_chat_session_members WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM chat_sessions WHERE id = ?").run(sessionId);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    this.#deleteFiles(paths);
+    return { ...session, deleted: true };
+  }
+
+  listInactiveActive(inactiveBeforeMs) {
+    const cutoff = Number(inactiveBeforeMs);
+    if (!Number.isFinite(cutoff)) return [];
+    return this.db.prepare(`
+      SELECT * FROM chat_sessions
+      WHERE status = 'active' AND last_activity_at_ms <= ?
+      ORDER BY last_activity_at_ms ASC, id ASC
+    `).all(cutoff);
+  }
+
   touchByUser(userId, now = Date.now()) {
     const result = this.db.prepare(`
       UPDATE chat_sessions
@@ -230,6 +302,121 @@ export class ChatSessionArchive {
       ) AND status = 'active'
     `).run(now, userId);
     return Number(result.changes) > 0;
+  }
+
+  recordMessage(userId, message, now = Date.now()) {
+    if (!MESSAGE_KINDS.has(message?.kind)) throw new TypeError("Unsupported archived message kind");
+    const sourceChatId = Number(message.sourceChatId);
+    const sourceMessageId = Number(message.sourceMessageId);
+    if (!Number.isSafeInteger(sourceChatId) || !Number.isSafeInteger(sourceMessageId)) {
+      throw new TypeError("Message source IDs must be safe integers");
+    }
+
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const active = this.db.prepare(`
+        SELECT s.id FROM active_chat_session_members m
+        JOIN chat_sessions s ON s.id = m.session_id
+        WHERE m.user_id = ? AND s.status = 'active'
+      `).get(userId);
+      if (!active) {
+        this.db.exec("COMMIT");
+        return null;
+      }
+
+      const hasFile = Boolean(message.fileId);
+      const inserted = this.db.prepare(`
+        INSERT OR IGNORE INTO chat_session_messages (
+          session_id, sender_id, source_chat_id, source_message_id, kind,
+          text, caption, file_id, file_unique_id, file_name, sticker_emoji,
+          media_group_id, file_size, mime_type, storage_status,
+          reply_to_source_message_id, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        active.id,
+        userId,
+        sourceChatId,
+        sourceMessageId,
+        message.kind,
+        message.text ?? null,
+        message.caption ?? null,
+        message.fileId ?? null,
+        message.fileUniqueId ?? null,
+        message.fileName ?? null,
+        message.stickerEmoji ?? null,
+        message.mediaGroupId ?? null,
+        Number.isSafeInteger(message.fileSize) ? message.fileSize : null,
+        message.mimeType ?? null,
+        hasFile ? "pending" : "none",
+        Number.isSafeInteger(message.replyToSourceMessageId) ? message.replyToSourceMessageId : null,
+        now
+      );
+
+      if (Number(inserted.changes) === 0) {
+        const duplicate = this.db.prepare(`
+          SELECT * FROM chat_session_messages
+          WHERE source_chat_id = ? AND source_message_id = ?
+        `).get(sourceChatId, sourceMessageId);
+        this.db.exec("COMMIT");
+        return duplicate ? { ...duplicate, duplicate: true } : null;
+      }
+
+      this.db.prepare("UPDATE chat_sessions SET last_activity_at_ms = ? WHERE id = ?").run(now, active.id);
+      const messageId = Number(inserted.lastInsertRowid);
+      this.db.exec("COMMIT");
+      return this.db.prepare("SELECT * FROM chat_session_messages WHERE id = ?").get(messageId);
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  linkMessageMedia(sourceChatId, sourceMessageId, mediaId) {
+    this.db.prepare(`
+      UPDATE chat_session_messages
+      SET media_id = ?, storage_status = 'linked', storage_error = NULL
+      WHERE source_chat_id = ? AND source_message_id = ?
+    `).run(mediaId, sourceChatId, sourceMessageId);
+    return this.db.prepare(`
+      SELECT * FROM chat_session_messages
+      WHERE source_chat_id = ? AND source_message_id = ?
+    `).get(sourceChatId, sourceMessageId) || null;
+  }
+
+  completeMessageAttachment(messageId, bytes, extension, mimeType = null) {
+    const message = this.db.prepare("SELECT * FROM chat_session_messages WHERE id = ?").get(messageId);
+    if (!message || message.storage_status === "stored" || message.storage_status === "linked") return message || null;
+    if (!message.file_id) return message;
+    const candidate = path.resolve(this.filesDirectory, `message-${message.id}${safeExtension(extension)}`);
+    if (!candidate.startsWith(`${this.filesDirectory}${path.sep}`)) {
+      throw new Error("Session message path escaped the archive directory");
+    }
+    const temporary = `${candidate}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(temporary, Buffer.from(bytes));
+    try {
+      fs.renameSync(temporary, candidate);
+      const relativePath = path.relative(this.rootDirectory, candidate);
+      const result = this.db.prepare(`
+        UPDATE chat_session_messages
+        SET storage_status = 'stored', local_path = ?, mime_type = COALESCE(?, mime_type),
+            file_size = ?, storage_error = NULL
+        WHERE id = ? AND media_id IS NULL
+      `).run(relativePath, mimeType, fs.statSync(candidate).size, message.id);
+      if (Number(result.changes) === 0) fs.rmSync(candidate, { force: true });
+    } catch (error) {
+      fs.rmSync(temporary, { force: true });
+      fs.rmSync(candidate, { force: true });
+      throw error;
+    }
+    return this.db.prepare("SELECT * FROM chat_session_messages WHERE id = ?").get(message.id);
+  }
+
+  failMessageAttachment(messageId, errorCode) {
+    this.db.prepare(`
+      UPDATE chat_session_messages
+      SET storage_status = 'unavailable', storage_error = ?
+      WHERE id = ? AND storage_status NOT IN ('stored', 'linked')
+    `).run(String(errorCode || "archive_failed").slice(0, 160), messageId);
   }
 
   beginMedia(userId, media, now = Date.now()) {
@@ -339,6 +526,9 @@ export class ChatSessionArchive {
   #sessionSelect(whereClause) {
     return `
       SELECT s.*,
+        (SELECT COUNT(*) FROM chat_session_messages msg WHERE msg.session_id = s.id) AS message_count,
+        (SELECT COUNT(*) FROM chat_session_messages msg WHERE msg.session_id = s.id AND msg.file_id IS NOT NULL) AS attachment_count,
+        (SELECT COUNT(*) FROM chat_session_messages msg WHERE msg.session_id = s.id AND msg.storage_status = 'unavailable') AS message_unavailable_count,
         COALESCE(SUM(CASE WHEN m.kind = 'photo' THEN 1 ELSE 0 END), 0) AS photo_count,
         COALESCE(SUM(CASE WHEN m.kind = 'video' THEN 1 ELSE 0 END), 0) AS video_count,
         COALESCE(SUM(CASE WHEN m.kind = 'video_note' THEN 1 ELSE 0 END), 0) AS video_note_count,
@@ -394,6 +584,39 @@ export class ChatSessionArchive {
     return { items, total, limit: safeLimit, offset: safeOffset };
   }
 
+  listMessages(sessionId, { limit = 1, offset = 0, now = Date.now() } = {}) {
+    if (!this.getSession(sessionId, now)) return { items: [], total: 0, limit: 1, offset: 0 };
+    const safeLimit = boundedPageValue(limit, 1, 1, 50);
+    const safeOffset = boundedPageValue(offset, 0, 0, 1_000_000);
+    const total = Number(this.db.prepare("SELECT COUNT(*) AS count FROM chat_session_messages WHERE session_id = ?")
+      .get(sessionId).count);
+    const items = this.db.prepare(`
+      SELECT * FROM chat_session_messages
+      WHERE session_id = ? ORDER BY created_at_ms, id LIMIT ? OFFSET ?
+    `).all(sessionId, safeLimit, safeOffset);
+    return { items, total, limit: safeLimit, offset: safeOffset };
+  }
+
+  resolveMessageAttachment(messageId, now = Date.now()) {
+    const message = this.db.prepare(`
+      SELECT msg.* FROM chat_session_messages msg
+      JOIN chat_sessions s ON s.id = msg.session_id
+      WHERE msg.id = ?
+        AND (s.status = 'active' OR (s.media_count > ? AND s.expires_at_ms > ?))
+    `).get(messageId, MEDIA_RETENTION_THRESHOLD, now);
+    if (!message) return null;
+    if (message.media_id) {
+      const linked = this.resolveMediaPath(message.media_id, now);
+      return { ...message, absolutePath: linked?.absolutePath || null };
+    }
+    if (!message.local_path || message.storage_status !== "stored") return { ...message, absolutePath: null };
+    const candidate = path.resolve(this.rootDirectory, message.local_path);
+    if (!candidate.startsWith(`${this.filesDirectory}${path.sep}`) || !fs.existsSync(candidate)) {
+      return { ...message, absolutePath: null };
+    }
+    return { ...message, absolutePath: candidate };
+  }
+
   resolveMediaPath(mediaId, now = Date.now()) {
     const media = this.db.prepare(`
       SELECT m.* FROM chat_session_media m
@@ -416,7 +639,7 @@ export class ChatSessionArchive {
       WHERE status = 'ended' AND expires_at_ms IS NOT NULL AND expires_at_ms <= ?
     `).all(now);
     if (!expired.length) return { sessions: 0, files: 0 };
-    const paths = expired.flatMap((row) => this.#mediaPaths(row.id));
+    const paths = [...new Set(expired.flatMap((row) => this.#allFilePaths(row.id)))];
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const remove = this.db.prepare("DELETE FROM chat_sessions WHERE id = ?");
