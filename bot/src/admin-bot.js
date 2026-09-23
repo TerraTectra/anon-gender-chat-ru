@@ -8,6 +8,7 @@ import { FocusStore } from "./focus-store.js";
 import { GameStore } from "./game-store.js";
 import { LanguageStore } from "./language-store.js";
 import { HubStore } from "./hub-store.js";
+import { collectNetworkMetrics } from "./network-metrics.js";
 import { products as catalogProducts } from "./products.js";
 import { safeErrorSummary } from "./safe-error.js";
 import { TaskStore } from "./task-store.js";
@@ -151,6 +152,16 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   const healthPath = path.resolve(options.healthPath || "./data/health.json");
   const reportStatePath = path.resolve(options.reportStatePath || "./data/admin-report-state.json");
   const reportHour = Number.isInteger(options.reportHour) ? options.reportHour : 10;
+  const nicheMetricDbPaths = [
+    options.englishDbPath,
+    options.focusDbPath,
+    options.gameDbPath,
+    options.budgetDbPath,
+    options.hubDbPath,
+    options.taskDbPath,
+    options.quizDbPath,
+    options.partyDbPath
+  ].filter(Boolean);
   let reportTimer = null;
   bot.closeStore = () => store.close();
 
@@ -301,9 +312,13 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     const sourceLines = products.flatMap(([name, productStore]) => productStore.sourceStats(1)
       .map((row) => `${name}: ${row.source} (${row.users})`));
     const hub = hubStore?.stats();
+    const metrics = collectNetworkMetrics({
+      anonDbPath: dbPath,
+      nicheDbPaths: nicheMetricDbPaths
+    });
     const date = moscowTimeParts().date.split("-").reverse().join(".");
 
-    return `Ежедневный отчёт TerraTectra • ${date}\n\nНовых регистраций сегодня: ${newToday}\nРегистраций за 7 дней: ${new7}\nПо приглашениям: ${referrals}\nПолезных действий за 7 дней: ${actions7}\n\nРост по продуктам за 7 дней\n${productLines}\n\nИсточники-лидеры\n${sourceLines.length ? sourceLines.join("\n") : "Данных пока нет"}\n\nТребуют внимания\nЛиды: ${hub?.pendingLeads || 0}\nИдеи: ${hub?.pendingSuggestions || 0}`;
+    return `Ежедневный отчёт TerraTectra • ${date}\n\nВсего зарегистрировались: ${metrics.registrations}\nПодтверждённо заблокировали анон-бота: ${metrics.blocked}\nАктивны за последние 24 часа: ${metrics.active24h}\nПостоянно возвращаются: ${metrics.regular7d}`;
   }
 
   function readLastReportDate() {
@@ -330,7 +345,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     if (reportTimer) return;
     reportTimer = setInterval(async () => {
       const now = moscowTimeParts();
-      if (now.hour !== reportHour || now.minute !== 0 || readLastReportDate() === now.date) return;
+      if (now.hour < reportHour || readLastReportDate() === now.date) return;
       try {
         await sendDailyReport();
         saveLastReportDate(now.date);

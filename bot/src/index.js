@@ -177,6 +177,11 @@ function shutdown(status = "stopped", details = {}) {
     safely(() => taskBot?.stop());
     safely(() => quizBot?.stop());
     safely(() => partyBot?.stop());
+    try {
+      await userBot.drainArchiveJobs?.();
+    } catch {
+      // Archive jobs are best-effort during shutdown; stores still close cleanly below.
+    }
     safely(() => englishBot?.closeStore?.());
     safely(() => focusBot?.closeStore?.());
     safely(() => gameBot?.closeStore?.());

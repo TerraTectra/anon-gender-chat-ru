@@ -81,6 +81,44 @@ CREATE TABLE IF NOT EXISTS bot_access (
 CREATE INDEX IF NOT EXISTS idx_queue_created ON queue(created_at);
 CREATE INDEX IF NOT EXISTS idx_reports_reviewed ON reports(reviewed_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_type_date ON events(type, created_at);
+
+CREATE TABLE IF NOT EXISTS user_activity_days (
+  user_id INTEGER NOT NULL,
+  activity_date TEXT NOT NULL,
+  PRIMARY KEY (user_id, activity_date)
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_events_activity_day
+AFTER INSERT ON events
+BEGIN
+  INSERT INTO user_activity_days (user_id, activity_date)
+  VALUES (NEW.user_id, date(NEW.created_at, '+3 hours'))\n  ON CONFLICT(user_id, activity_date) DO NOTHING;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_bot_access_activity_day_insert
+AFTER INSERT ON bot_access
+WHEN NEW.last_inbound_at IS NOT NULL
+BEGIN
+  INSERT INTO user_activity_days (user_id, activity_date)
+  VALUES (NEW.user_id, date(NEW.last_inbound_at, '+3 hours'))\n  ON CONFLICT(user_id, activity_date) DO NOTHING;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_bot_access_activity_day_update
+AFTER UPDATE OF last_inbound_at ON bot_access
+WHEN NEW.last_inbound_at IS NOT NULL
+BEGIN
+  INSERT INTO user_activity_days (user_id, activity_date)
+  VALUES (NEW.user_id, date(NEW.last_inbound_at, '+3 hours'))\n  ON CONFLICT(user_id, activity_date) DO NOTHING;
+END;
+
+INSERT OR IGNORE INTO user_activity_days (user_id, activity_date)
+SELECT user_id, date(created_at, '+3 hours') FROM events;
+
+INSERT OR IGNORE INTO user_activity_days (user_id, activity_date)
+SELECT user_id, date(last_inbound_at, '+3 hours') FROM bot_access
+WHERE last_inbound_at IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_user_activity_date ON user_activity_days(activity_date, user_id);
 `;
 
 export class Store {

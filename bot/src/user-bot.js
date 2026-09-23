@@ -159,6 +159,24 @@ export function createUserBot(token, dbPath, options = {}) {
     bot.hears(label, handler);
     bot.command(command, handler);
   };
+  const archiveJobs = new Set();
+  function queueArchiveJob(promise) {
+    let job;
+    job = Promise.resolve(promise)
+      .catch((error) => console.error("Background session archive job failed", error instanceof Error ? error.message : String(error)))
+      .finally(() => archiveJobs.delete(job));
+    archiveJobs.add(job);
+    return job;
+  }
+  bot.drainArchiveJobs = async (timeoutMs = 10_000) => {
+    if (!archiveJobs.size) return;
+    let timer;
+    await Promise.race([
+      Promise.allSettled([...archiveJobs]),
+      new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); })
+    ]);
+    if (timer) clearTimeout(timer);
+  };
   let sessionMaintenanceRunning = false;
   async function runSessionMaintenance() {
     if (sessionMaintenanceRunning) return;
@@ -243,7 +261,9 @@ export function createUserBot(token, dbPath, options = {}) {
       if (!remote.file_path) throw new Error("missing_file_path");
       phase = "download";
       const encodedPath = remote.file_path.split("/").map(encodeURIComponent).join("/");
-      const response = await fetch(`https://api.telegram.org/file/bot${token}/${encodedPath}`);
+      const response = await fetch(`https://api.telegram.org/file/bot${token}/${encodedPath}`, {
+        signal: AbortSignal.timeout(60_000)
+      });
       if (!response.ok) {
         store.failChatMessageAttachment(capture.id, `download_http_${response.status}`);
         return;
@@ -283,7 +303,7 @@ export function createUserBot(token, dbPath, options = {}) {
         : archived.kind === "sticker" ? (ctx.message.sticker?.is_video ? ".webm" : ctx.message.sticker?.is_animated ? ".tgs" : ".webp")
         : archived.kind === "animation" ? ".mp4"
         : path.extname(archived.fileName || "") || ".bin";
-      await downloadArchivedFile(ctx, capture, archived.fileId, archived.fileSize, fallbackExtension, archived.mimeType);
+      queueArchiveJob(downloadArchivedFile(ctx, capture, archived.fileId, archived.fileSize, fallbackExtension, archived.mimeType));
     }
     return capture;
   }
@@ -319,7 +339,9 @@ export function createUserBot(token, dbPath, options = {}) {
       if (!remote.file_path) throw new Error("missing_file_path");
       phase = "download";
       const encodedPath = remote.file_path.split("/").map(encodeURIComponent).join("/");
-      const response = await fetch(`https://api.telegram.org/file/bot${token}/${encodedPath}`);
+      const response = await fetch(`https://api.telegram.org/file/bot${token}/${encodedPath}`, {
+        signal: AbortSignal.timeout(60_000)
+      });
       if (!response.ok) {
         store.failChatMedia(capture.id, `download_http_${response.status}`);
         return;
@@ -567,7 +589,7 @@ export function createUserBot(token, dbPath, options = {}) {
     }
     await archiveDeliveredMessage(ctx);
     const media = retainedMediaFromMessage(ctx.message);
-    if (media) await archiveRetainedMedia(ctx, media);
+    if (media) queueArchiveJob(archiveRetainedMedia(ctx, media));
   });
 
   bot.catch((error) => console.error("User bot error", safeErrorSummary(error)));

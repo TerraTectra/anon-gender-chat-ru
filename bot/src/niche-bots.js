@@ -10,7 +10,54 @@ import { safeErrorSummary } from "./safe-error.js";
 import { parseStartSource } from "./tracking.js";
 
 const execFileAsync = promisify(execFile);
-const COMMON_SCHEMA=`PRAGMA journal_mode=WAL;CREATE TABLE IF NOT EXISTS niche_users(id INTEGER PRIMARY KEY,username TEXT,source TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS niche_actions(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,action TEXT NOT NULL,meta TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);CREATE INDEX IF NOT EXISTS idx_niche_actions_user ON niche_actions(user_id,created_at);`;
+const COMMON_SCHEMA = `
+PRAGMA journal_mode = WAL;
+CREATE TABLE IF NOT EXISTS niche_users (
+  id INTEGER PRIMARY KEY,
+  username TEXT,
+  source TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS niche_actions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  meta TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS niche_activity_days (
+  user_id INTEGER NOT NULL,
+  activity_date TEXT NOT NULL,
+  PRIMARY KEY (user_id, activity_date)
+);
+CREATE TRIGGER IF NOT EXISTS trg_niche_user_activity_insert
+AFTER INSERT ON niche_users
+BEGIN
+  INSERT INTO niche_activity_days (user_id, activity_date)
+  VALUES (NEW.id, date(NEW.updated_at, '+3 hours'))\n  ON CONFLICT(user_id, activity_date) DO NOTHING;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_niche_user_activity_update
+AFTER UPDATE OF updated_at ON niche_users
+BEGIN
+  INSERT INTO niche_activity_days (user_id, activity_date)
+  VALUES (NEW.id, date(NEW.updated_at, '+3 hours'))\n  ON CONFLICT(user_id, activity_date) DO NOTHING;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_niche_action_activity
+AFTER INSERT ON niche_actions
+BEGIN
+  INSERT INTO niche_activity_days (user_id, activity_date)
+  VALUES (NEW.user_id, date(NEW.created_at, '+3 hours'))\n  ON CONFLICT(user_id, activity_date) DO NOTHING;
+END;
+INSERT OR IGNORE INTO niche_activity_days (user_id, activity_date)
+SELECT id, date(created_at, '+3 hours') FROM niche_users;
+INSERT OR IGNORE INTO niche_activity_days (user_id, activity_date)
+SELECT id, date(updated_at, '+3 hours') FROM niche_users;
+INSERT OR IGNORE INTO niche_activity_days (user_id, activity_date)
+SELECT user_id, date(created_at, '+3 hours') FROM niche_actions;
+CREATE INDEX IF NOT EXISTS idx_niche_actions_user ON niche_actions(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_niche_activity_date ON niche_activity_days(activity_date, user_id);
+`;
 class NicheStore{constructor(filename,schema=""){const p=path.resolve(filename);fs.mkdirSync(path.dirname(p),{recursive:true});this.db=new DatabaseSync(p);this.db.exec(COMMON_SCHEMA+schema);}close(){this.db.close();}user(ctx,source=null){if(!ctx?.from?.id)return;this.db.prepare(`INSERT INTO niche_users(id,username,source) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET username=excluded.username,source=COALESCE(niche_users.source,excluded.source),updated_at=CURRENT_TIMESTAMP`).run(ctx.from.id,ctx.from.username??null,source);}action(id,a,m=null){this.db.prepare("INSERT INTO niche_actions(user_id,action,meta) VALUES(?,?,?)").run(id,a,m==null?null:JSON.stringify(m));}}
 function trackedStart(store,handler){return async ctx=>{const s=parseStartSource(ctx.match,ctx.from.id);store.user(ctx,s);store.action(ctx.from.id,"start",s);await handler(ctx);};}
 function attachBasics(bot,store,profile){bot.closeStore=()=>store.close();bot.syncProfile=async()=>{const rs=await Promise.allSettled([bot.api.setMyName(profile.name),bot.api.setMyDescription(profile.description),bot.api.setMyShortDescription(profile.short),bot.api.setMyCommands(profile.commands)]);const n=rs.filter(x=>x.status==="rejected").length;if(n)console.error(`${profile.name} profile sync: ${n} failed`);};bot.catch(e=>console.error(`${profile.name} error`,safeErrorSummary(e)));return bot;}
