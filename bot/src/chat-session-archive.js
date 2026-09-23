@@ -161,7 +161,7 @@ export class ChatSessionArchive {
     const session = this.db.prepare("SELECT * FROM chat_sessions WHERE id = ?").get(sessionId);
     if (!session || session.status !== "active") return { session: null, paths: [] };
 
-    const paths = this.#mediaPaths(sessionId);
+    const paths = this.#allFilePaths(sessionId);
     this.db.prepare("DELETE FROM active_chat_session_members WHERE session_id = ?").run(sessionId);
     if (Number(session.media_count) <= MEDIA_RETENTION_THRESHOLD) {
       this.db.prepare("DELETE FROM chat_sessions WHERE id = ?").run(sessionId);
