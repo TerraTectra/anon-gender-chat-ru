@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { MEDIA_RETENTION_MS } from "../src/chat-session-archive.js";
 import { Store } from "../src/store.js";
-import { retainedMediaFromMessage } from "../src/user-bot.js";
+import { archivedMessageFromMessage, retainedMediaFromMessage } from "../src/user-bot.js";
 
 function createFixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "anon-sessions-"));
@@ -25,6 +25,16 @@ function createFixture() {
       fs.rmSync(directory, { recursive: true, force: true });
     }
   };
+}
+
+function addMessage(store, index, senderId = 1, overrides = {}, now = 1_000 + index) {
+  return store.recordChatMessage(senderId, {
+    kind: "text",
+    text: `message-${index}`,
+    sourceChatId: senderId,
+    sourceMessageId: index,
+    ...overrides
+  }, now);
 }
 
 function addMedia(store, index, senderId = 1, now = 1_000 + index) {
@@ -144,4 +154,139 @@ test("only photos, videos and video notes are selected for retention", () => {
   ] }).fileId, "large");
   assert.equal(retainedMediaFromMessage({ video: { file_id: "video", file_unique_id: "v" } }).kind, "video");
   assert.equal(retainedMediaFromMessage({ video_note: { file_id: "circle", file_unique_id: "c" } }).kind, "video_note");
+});
+
+
+test("a qualifying session retains the complete transcript in chronological order", () => {
+  const fixture = createFixture();
+  try {
+    addMessage(fixture.store, 1, 1, { text: "first" }, 1_100);
+    const voice = addMessage(fixture.store, 2, 2, {
+      kind: "voice",
+      text: null,
+      fileId: "voice-file",
+      fileUniqueId: "voice-unique",
+      fileSize: 5,
+      mimeType: "audio/ogg"
+    }, 1_200);
+    fixture.store.completeChatMessageAttachment(voice.id, Buffer.from("voice"), ".ogg", "audio/ogg");
+    addMessage(fixture.store, 3, 1, { text: "third" }, 1_300);
+    addMedia(fixture.store, 10, 2, 1_400);
+
+    const active = fixture.store.listActiveChatSessions().items[0];
+    assert.equal(active.message_count, 3);
+    assert.equal(active.attachment_count, 1);
+    assert.equal(active.media_count, 1);
+
+    const endedAt = 2_000;
+    fixture.store.disconnect(1, "stop", endedAt);
+    const retained = fixture.store.listRetainedChatSessions({ now: endedAt + 1 });
+    assert.equal(retained.total, 1);
+    const transcript = fixture.store.listChatSessionMessages(retained.items[0].id, { limit: 10, now: endedAt + 1 });
+    assert.deepEqual(transcript.items.map((row) => row.source_message_id), [1, 2, 3]);
+    assert.deepEqual(transcript.items.map((row) => row.sender_id), [1, 2, 1]);
+    assert.equal(fixture.store.resolveChatSessionMessageAttachment(voice.id, endedAt + 1).absolutePath.endsWith(".ogg"), true);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("a non-qualifying session deletes its transcript and attachment immediately on end", () => {
+  const fixture = createFixture();
+  try {
+    addMessage(fixture.store, 1, 1, { text: "temporary" });
+    const document = addMessage(fixture.store, 2, 2, {
+      kind: "document",
+      text: null,
+      fileId: "doc-file",
+      fileUniqueId: "doc-unique",
+      fileName: "note.txt",
+      fileSize: 4,
+      mimeType: "text/plain"
+    });
+    fixture.store.completeChatMessageAttachment(document.id, Buffer.from("note"), ".txt", "text/plain");
+    assert.equal(fs.readdirSync(path.join(fixture.archiveRoot, "files")).length, 1);
+
+    fixture.store.disconnect(1, "stop", 5_000);
+    assert.equal(fixture.store.listActiveChatSessions().total, 0);
+    assert.equal(fixture.store.listRetainedChatSessions({ now: 5_001 }).total, 0);
+    assert.equal(fs.readdirSync(path.join(fixture.archiveRoot, "files")).length, 0);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("duplicate Telegram messages and media remain idempotent", () => {
+  const fixture = createFixture();
+  try {
+    const firstMessage = addMessage(fixture.store, 50, 1, { text: "once" });
+    const duplicateMessage = addMessage(fixture.store, 50, 1, { text: "once" });
+    assert.equal(duplicateMessage.id, firstMessage.id);
+    assert.equal(duplicateMessage.duplicate, true);
+    addMedia(fixture.store, 50, 1);
+    addMedia(fixture.store, 50, 1);
+    const session = fixture.store.listActiveChatSessions().items[0];
+    assert.equal(session.message_count, 1);
+    assert.equal(session.media_count, 1);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("six hours of inactivity ends the pair and retains only qualifying sessions", () => {
+  const fixture = createFixture();
+  try {
+    addMessage(fixture.store, 1, 1, { text: "hello" }, 1_000);
+    addMedia(fixture.store, 2, 2, 1_100);
+    const sessionId = fixture.store.listActiveChatSessions().items[0].id;
+    const now = 1_100 + 6 * 60 * 60 * 1000;
+    const ended = fixture.store.expireInactiveChatSessions(now);
+    assert.equal(ended.length, 1);
+    assert.deepEqual(ended[0].userIds, [1, 2]);
+    assert.equal(fixture.store.getUser(1).partner_id, null);
+    assert.equal(fixture.store.getUser(2).partner_id, null);
+    assert.equal(fixture.store.getUser(1).state, "idle");
+    assert.equal(fixture.store.getUser(2).state, "idle");
+    assert.equal(fixture.store.getChatSession(sessionId, now + 1).status, "ended");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("manual session deletion disconnects an active pair and removes archived files", () => {
+  const fixture = createFixture();
+  try {
+    const message = addMessage(fixture.store, 3, 1, {
+      kind: "document",
+      text: null,
+      fileId: "document-file",
+      fileUniqueId: "document-unique",
+      fileName: "file.bin",
+      fileSize: 4,
+      mimeType: "application/octet-stream"
+    });
+    fixture.store.completeChatMessageAttachment(message.id, Buffer.from("data"), ".bin", "application/octet-stream");
+    addMedia(fixture.store, 4, 2);
+    const sessionId = fixture.store.listActiveChatSessions().items[0].id;
+    const deleted = fixture.store.deleteChatSession(sessionId);
+    assert.equal(deleted.deleted, true);
+    assert.deepEqual(deleted.userIds, [1, 2]);
+    assert.equal(fixture.store.getUser(1).partner_id, null);
+    assert.equal(fixture.store.getUser(2).partner_id, null);
+    assert.equal(fixture.store.listActiveChatSessions().total, 0);
+    assert.equal(fs.readdirSync(path.join(fixture.archiveRoot, "files")).length, 0);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("archive message extraction covers the supported conversation payloads", () => {
+  assert.deepEqual(archivedMessageFromMessage({ text: "hello" }).kind, "text");
+  assert.equal(archivedMessageFromMessage({ voice: { file_id: "voice", file_unique_id: "vu" } }).kind, "voice");
+  assert.equal(archivedMessageFromMessage({ document: { file_id: "doc", file_unique_id: "du", file_name: "a.txt" } }).kind, "document");
+  assert.equal(archivedMessageFromMessage({ sticker: { file_id: "sticker", file_unique_id: "su", emoji: "🙂" } }).stickerEmoji, "🙂");
+  assert.equal(archivedMessageFromMessage({ animation: { file_id: "gif", file_unique_id: "gu" } }).kind, "animation");
+  assert.equal(archivedMessageFromMessage({ photo: [{ file_id: "photo", file_unique_id: "pu" }] }).kind, "photo");
+  assert.equal(archivedMessageFromMessage({ video: { file_id: "video", file_unique_id: "vv" } }).kind, "video");
+  assert.equal(archivedMessageFromMessage({ video_note: { file_id: "circle", file_unique_id: "cv" } }).kind, "video_note");
 });

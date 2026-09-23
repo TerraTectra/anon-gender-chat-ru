@@ -14,6 +14,7 @@ import {
   createToolsBot
 } from "./niche-bots.js";
 import { createUserBot } from "./user-bot.js";
+import { menuKeyboard } from "./keyboards.js";
 import { isTelegramPollingConflict, safeErrorSummary } from "./safe-error.js";
 import { acquireSingleInstance, AlreadyRunningError, SINGLE_INSTANCE_EXIT_CODE } from "./single-instance.js";
 
@@ -80,6 +81,18 @@ const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
     await userBot.api.sendMessage(chatId, caption, common);
     return userBot.api.sendVideoNote(chatId, media.file_id, common);
   },
+  sourceArchiveSender: async (chatId, message) => {
+    const common = { protect_content: true };
+    if (message.kind === "photo") return userBot.api.sendPhoto(chatId, message.file_id, common);
+    if (message.kind === "video") return userBot.api.sendVideo(chatId, message.file_id, common);
+    if (message.kind === "voice") return userBot.api.sendVoice(chatId, message.file_id, common);
+    if (message.kind === "video_note") return userBot.api.sendVideoNote(chatId, message.file_id, common);
+    if (message.kind === "document") return userBot.api.sendDocument(chatId, message.file_id, common);
+    if (message.kind === "sticker") return userBot.api.sendSticker(chatId, message.file_id, common);
+    if (message.kind === "animation") return userBot.api.sendAnimation(chatId, message.file_id, common);
+    return null;
+  },
+  sourceSessionNotifier: (userId, text) => userBot.api.sendMessage(userId, text, { reply_markup: menuKeyboard }),
   channelStatusProvider: () => channelPublisher?.status() || []
 });
 channelPublisher = new ChannelPublisher(

@@ -151,12 +151,39 @@ export class Store {
     return this.sessionArchive.listMedia(sessionId, options);
   }
 
+  listChatSessionMessages(sessionId, options = {}) {
+    return this.sessionArchive.listMessages(sessionId, options);
+  }
+
   resolveChatSessionMedia(mediaId, now = Date.now()) {
     return this.sessionArchive.resolveMediaPath(mediaId, now);
   }
 
+  resolveChatSessionMessageAttachment(messageId, now = Date.now()) {
+    return this.sessionArchive.resolveMessageAttachment(messageId, now);
+  }
+
   touchChatSession(userId, now = Date.now()) {
     return this.sessionArchive.touchByUser(userId, now);
+  }
+
+  recordChatMessage(userId, message, now = Date.now()) {
+    const user = this.getUser(userId);
+    if (!user?.partner_id) return null;
+    this.sessionArchive.ensureActiveSession(userId, user.partner_id, now);
+    return this.sessionArchive.recordMessage(userId, message, now);
+  }
+
+  completeChatMessageAttachment(messageId, bytes, extension, mimeType = null) {
+    return this.sessionArchive.completeMessageAttachment(messageId, bytes, extension, mimeType);
+  }
+
+  failChatMessageAttachment(messageId, errorCode) {
+    return this.sessionArchive.failMessageAttachment(messageId, errorCode);
+  }
+
+  linkChatMessageMedia(sourceChatId, sourceMessageId, mediaId) {
+    return this.sessionArchive.linkMessageMedia(sourceChatId, sourceMessageId, mediaId);
   }
 
   beginChatMedia(userId, media, now = Date.now()) {
@@ -176,6 +203,58 @@ export class Store {
 
   purgeExpiredChatSessions(now = Date.now()) {
     return this.sessionArchive.purgeExpired(now);
+  }
+
+  expireInactiveChatSessions(now = Date.now(), inactivityMs = 6 * 60 * 60 * 1000) {
+    const cutoff = Number(now) - Number(inactivityMs);
+    const stale = this.sessionArchive.listInactiveActive(cutoff);
+    const ended = [];
+    for (const session of stale) {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db.prepare("DELETE FROM queue WHERE user_id IN (?, ?)").run(session.user_a_id, session.user_b_id);
+        this.db.prepare(`
+          UPDATE users SET partner_id = NULL, state = 'idle'
+          WHERE id IN (?, ?)
+            AND (partner_id IN (?, ?) OR partner_id IS NULL)
+        `).run(session.user_a_id, session.user_b_id, session.user_a_id, session.user_b_id);
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+      const closed = this.sessionArchive.endSession(session.id, "inactivity_timeout", now);
+      if (closed) ended.push({
+        ...closed,
+        userIds: [Number(session.user_a_id), Number(session.user_b_id)]
+      });
+    }
+    return ended;
+  }
+
+  deleteChatSession(sessionId) {
+    const session = this.sessionArchive.getSession(sessionId);
+    if (!session) return null;
+    if (session.status === "active") {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db.prepare("DELETE FROM queue WHERE user_id IN (?, ?)").run(session.user_a_id, session.user_b_id);
+        this.db.prepare(`
+          UPDATE users SET partner_id = NULL, state = 'idle'
+          WHERE id IN (?, ?)
+            AND (partner_id IN (?, ?) OR partner_id IS NULL)
+        `).run(session.user_a_id, session.user_b_id, session.user_a_id, session.user_b_id);
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+    const deleted = this.sessionArchive.deleteSession(sessionId);
+    return deleted ? {
+      ...deleted,
+      userIds: [Number(session.user_a_id), Number(session.user_b_id)]
+    } : null;
   }
 
   upsertUser(id, username, source = null) {
