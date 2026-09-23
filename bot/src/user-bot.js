@@ -16,12 +16,100 @@ import {
 const profileReady = (user) => Boolean(user?.gender && user?.age);
 const displayGender = (value) => value === "male" ? "парень" : "девушка";
 const TELEGRAM_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024;
-const MEDIA_RETENTION_NOTICE = "Для модерации любой чат, где отправлялись фото, видео или кружки, попадает в защищённый архив на срок до 7 суток после завершения. Текст переписки не сохраняется.";
+const MEDIA_RETENTION_NOTICE = "Для модерации любой чат, где отправлялись фото, видео или кружки, попадает в защищённый архив на срок до 7 суток после завершения. В такой сессии сохраняется вся переписка по порядку вместе с отправленными вложениями.";
 
 export function isBotBlockedByUserError(error) {
   const code = Number(error?.error_code ?? error?.error?.error_code ?? error?.response?.error_code ?? 0);
   const description = String(error?.description ?? error?.error?.description ?? error?.response?.description ?? error?.message ?? "");
   return code === 403 && /bot was blocked by the user/i.test(description);
+}
+
+export function archivedMessageFromMessage(message) {
+  const common = {
+    text: message?.text ?? null,
+    caption: message?.caption ?? null,
+    mediaGroupId: message?.media_group_id ?? null,
+    replyToSourceMessageId: Number.isSafeInteger(message?.reply_to_message?.message_id)
+      ? message.reply_to_message.message_id
+      : null
+  };
+  if (message?.text != null) return { ...common, kind: "text" };
+  if (message?.photo?.length) {
+    const photo = message.photo.at(-1);
+    return {
+      ...common,
+      kind: "photo",
+      fileId: photo.file_id,
+      fileUniqueId: photo.file_unique_id,
+      fileSize: photo.file_size,
+      mimeType: "image/jpeg"
+    };
+  }
+  if (message?.video) {
+    return {
+      ...common,
+      kind: "video",
+      fileId: message.video.file_id,
+      fileUniqueId: message.video.file_unique_id,
+      fileName: message.video.file_name ?? null,
+      fileSize: message.video.file_size,
+      mimeType: message.video.mime_type || "video/mp4"
+    };
+  }
+  if (message?.voice) {
+    return {
+      ...common,
+      kind: "voice",
+      fileId: message.voice.file_id,
+      fileUniqueId: message.voice.file_unique_id,
+      fileSize: message.voice.file_size,
+      mimeType: message.voice.mime_type || "audio/ogg"
+    };
+  }
+  if (message?.video_note) {
+    return {
+      ...common,
+      kind: "video_note",
+      fileId: message.video_note.file_id,
+      fileUniqueId: message.video_note.file_unique_id,
+      fileSize: message.video_note.file_size,
+      mimeType: "video/mp4"
+    };
+  }
+  if (message?.document) {
+    return {
+      ...common,
+      kind: "document",
+      fileId: message.document.file_id,
+      fileUniqueId: message.document.file_unique_id,
+      fileName: message.document.file_name ?? null,
+      fileSize: message.document.file_size,
+      mimeType: message.document.mime_type || "application/octet-stream"
+    };
+  }
+  if (message?.sticker) {
+    return {
+      ...common,
+      kind: "sticker",
+      fileId: message.sticker.file_id,
+      fileUniqueId: message.sticker.file_unique_id,
+      fileSize: message.sticker.file_size,
+      mimeType: message.sticker.is_video ? "video/webm" : message.sticker.is_animated ? "application/x-tgsticker" : "image/webp",
+      stickerEmoji: message.sticker.emoji ?? null
+    };
+  }
+  if (message?.animation) {
+    return {
+      ...common,
+      kind: "animation",
+      fileId: message.animation.file_id,
+      fileUniqueId: message.animation.file_unique_id,
+      fileName: message.animation.file_name ?? null,
+      fileSize: message.animation.file_size,
+      mimeType: message.animation.mime_type || "video/mp4"
+    };
+  }
+  return null;
 }
 
 export function retainedMediaFromMessage(message) {
@@ -71,15 +159,41 @@ export function createUserBot(token, dbPath, options = {}) {
     bot.hears(label, handler);
     bot.command(command, handler);
   };
-  const retentionTimer = setInterval(() => {
+  let sessionMaintenanceRunning = false;
+  async function runSessionMaintenance() {
+    if (sessionMaintenanceRunning) return;
+    sessionMaintenanceRunning = true;
     try {
+      const inactive = store.expireInactiveChatSessions();
+      for (const session of inactive) {
+        for (const userId of session.userIds || []) {
+          try {
+            await bot.api.sendMessage(
+              userId,
+              "Чат завершён автоматически: более 6 часов не было активности.",
+              { reply_markup: menuKeyboard }
+            );
+            store.markDeliverySuccess(userId);
+          } catch (error) {
+            noteDeliveryFailure(userId, error);
+          }
+        }
+      }
       store.purgeExpiredChatSessions();
     } catch (error) {
-      console.error("Session retention cleanup failed", error instanceof Error ? error.message : String(error));
+      console.error("Session maintenance failed", error instanceof Error ? error.message : String(error));
+    } finally {
+      sessionMaintenanceRunning = false;
     }
-  }, 15 * 60 * 1000);
+  }
+  const retentionTimer = setInterval(() => void runSessionMaintenance(), 15 * 60 * 1000);
   retentionTimer.unref?.();
-  bot.stopSessionRetention = () => clearInterval(retentionTimer);
+  const initialMaintenanceTimer = setTimeout(() => void runSessionMaintenance(), 5_000);
+  initialMaintenanceTimer.unref?.();
+  bot.stopSessionRetention = () => {
+    clearInterval(retentionTimer);
+    clearTimeout(initialMaintenanceTimer);
+  };
   bot.closeStore = () => store.close();
   bot.use(session({ initial: () => ({ step: null, pendingReportId: null }) }));
 
@@ -117,6 +231,63 @@ export function createUserBot(token, dbPath, options = {}) {
     }
   }
 
+  async function downloadArchivedFile(ctx, capture, fileId, fileSize, fallbackExtension, mimeType) {
+    if (!capture || !fileId || capture.storage_status === "linked" || capture.storage_status === "stored") return;
+    if (Number(fileSize || 0) > TELEGRAM_DOWNLOAD_LIMIT_BYTES) {
+      store.failChatMessageAttachment(capture.id, "telegram_download_limit_20mb");
+      return;
+    }
+    let phase = "get_file";
+    try {
+      const remote = await ctx.api.getFile(fileId);
+      if (!remote.file_path) throw new Error("missing_file_path");
+      phase = "download";
+      const encodedPath = remote.file_path.split("/").map(encodeURIComponent).join("/");
+      const response = await fetch(`https://api.telegram.org/file/bot${token}/${encodedPath}`);
+      if (!response.ok) {
+        store.failChatMessageAttachment(capture.id, `download_http_${response.status}`);
+        return;
+      }
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length > TELEGRAM_DOWNLOAD_LIMIT_BYTES) {
+        store.failChatMessageAttachment(capture.id, "telegram_download_limit_20mb");
+        return;
+      }
+      phase = "store";
+      const extension = path.extname(remote.file_path) || fallbackExtension || ".bin";
+      store.completeChatMessageAttachment(capture.id, bytes, extension, mimeType);
+    } catch {
+      store.failChatMessageAttachment(capture.id, `${phase}_failed`);
+      console.error(`Session message attachment archive failed during ${phase}`);
+    }
+  }
+
+  async function archiveDeliveredMessage(ctx) {
+    const archived = archivedMessageFromMessage(ctx.message);
+    if (!archived) return null;
+    let capture;
+    try {
+      capture = store.recordChatMessage(ctx.from.id, {
+        ...archived,
+        sourceChatId: ctx.chat.id,
+        sourceMessageId: ctx.message.message_id
+      });
+    } catch (error) {
+      console.error("Session message registration failed", error instanceof Error ? error.message : String(error));
+      return null;
+    }
+    if (!capture || capture.duplicate || !archived.fileId) return capture;
+    const retained = retainedMediaFromMessage(ctx.message);
+    if (!retained) {
+      const fallbackExtension = archived.kind === "voice" ? ".ogg"
+        : archived.kind === "sticker" ? (ctx.message.sticker?.is_video ? ".webm" : ctx.message.sticker?.is_animated ? ".tgs" : ".webp")
+        : archived.kind === "animation" ? ".mp4"
+        : path.extname(archived.fileName || "") || ".bin";
+      await downloadArchivedFile(ctx, capture, archived.fileId, archived.fileSize, fallbackExtension, archived.mimeType);
+    }
+    return capture;
+  }
+
   async function archiveRetainedMedia(ctx, media) {
     let capture;
     try {
@@ -130,7 +301,13 @@ export function createUserBot(token, dbPath, options = {}) {
       console.error("Session media registration failed", error instanceof Error ? error.message : String(error));
       return;
     }
-    if (!capture || (capture.duplicate && capture.storage_status !== "pending")) return;
+    if (!capture) return;
+    try {
+      store.linkChatMessageMedia(ctx.chat.id, ctx.message.message_id, capture.id);
+    } catch (error) {
+      console.error("Session transcript/media link failed", error instanceof Error ? error.message : String(error));
+    }
+    if (capture.duplicate && capture.storage_status !== "pending") return;
     if (Number(media.fileSize || 0) > TELEGRAM_DOWNLOAD_LIMIT_BYTES) {
       store.failChatMedia(capture.id, "telegram_download_limit_20mb");
       return;
@@ -370,11 +547,7 @@ export function createUserBot(token, dbPath, options = {}) {
       await ctx.reply("Не удалось доставить сообщение. Возможно, собеседник заблокировал бота.", { reply_markup: menuKeyboard });
       return;
     }
-    try {
-      store.touchChatSession(ctx.from.id);
-    } catch (error) {
-      console.error("Chat session activity update failed", error instanceof Error ? error.message : String(error));
-    }
+    await archiveDeliveredMessage(ctx);
   });
 
   bot.on(["message:photo", "message:video", "message:voice", "message:video_note", "message:document", "message:sticker", "message:animation"], async (ctx) => {
@@ -392,15 +565,9 @@ export function createUserBot(token, dbPath, options = {}) {
       await ctx.reply("Не удалось доставить сообщение.", { reply_markup: menuKeyboard });
       return;
     }
+    await archiveDeliveredMessage(ctx);
     const media = retainedMediaFromMessage(ctx.message);
     if (media) await archiveRetainedMedia(ctx, media);
-    else {
-      try {
-        store.touchChatSession(ctx.from.id);
-      } catch (error) {
-        console.error("Chat session activity update failed", error instanceof Error ? error.message : String(error));
-      }
-    }
   });
 
   bot.catch((error) => console.error("User bot error", safeErrorSummary(error)));
