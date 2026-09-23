@@ -54,6 +54,24 @@ function participantText(participant) {
   return `${username} · ID ${participant.id} · ${gender}, ${participant.age ?? "—"}`;
 }
 
+function archivedMessageKindText(kind) {
+  return ({
+    text: "текст",
+    photo: "фото",
+    video: "видео",
+    voice: "голосовое",
+    video_note: "кружок",
+    document: "документ",
+    sticker: "стикер",
+    animation: "анимация"
+  })[kind] || kind || "сообщение";
+}
+
+function clippedText(value, limit = 3200) {
+  const text = String(value || "");
+  return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
+}
+
 export function chatSessionText(session, now = Date.now()) {
   const active = session.status === "active";
   const until = active ? now : session.ended_at_ms;
@@ -63,7 +81,7 @@ export function chatSessionText(session, now = Date.now()) {
   const unavailable = Number(session.unavailable_count || 0)
     ? `\nНедоступно локально: ${session.unavailable_count}`
     : "";
-  return `Сессия #${session.id}\nСтатус: ${status}\nУчастники:\n1. ${participantText(session.participants[0])}\n2. ${participantText(session.participants[1])}\n\nНачало: ${moscowDateTime(session.started_at_ms)} МСК\nПоследняя активность: ${moscowDateTime(session.last_activity_at_ms)} МСК\nДлительность: ${elapsedText(Number(until) - Number(session.started_at_ms))}\n\nВложения: ${session.media_count}\nФото: ${session.photo_count} · видео: ${session.video_count} · кружки: ${session.video_note_count}\nСохранено локально: ${session.stored_count}${unavailable}${expiry}${recovered}`;
+  return `Сессия #${session.id}\nСтатус: ${status}\nУчастники:\n1. ${participantText(session.participants[0])}\n2. ${participantText(session.participants[1])}\n\nНачало: ${moscowDateTime(session.started_at_ms)} МСК\nПоследняя активность: ${moscowDateTime(session.last_activity_at_ms)} МСК\nДлительность: ${elapsedText(Number(until) - Number(session.started_at_ms))}\n\nСообщений: ${session.message_count || 0}\nВложений в переписке: ${session.attachment_count || 0}\nRetention-медиа: ${session.media_count}\nФото: ${session.photo_count} · видео: ${session.video_count} · кружки: ${session.video_note_count}\nСохранено retention-файлов локально: ${session.stored_count}${unavailable}${expiry}${recovered}`;
 }
 
 export function aggregateSourceStats(products, limit = 15) {
@@ -154,7 +172,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   const anonProductKeyboard = new InlineKeyboard()
     .text("💬 Активные сессии", "anon_sessions:0")
     .row()
-    .text("🗂 Медиа за 7 дней", "anon_retained:0")
+    .text("🗂 Архив за 7 дней", "anon_retained:0")
     .row()
     .text("← Все боты", "admin_products");
 
@@ -183,7 +201,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     if (product === "anon") {
       const activeSessions = store.listActiveChatSessions({ limit: 1 }).total;
       const retainedSessions = store.listRetainedChatSessions({ limit: 1 }).total;
-      return `Анонимный чат\n\n${statsText(store.stats())}\nСессий в журнале: ${activeSessions}\nМедиасессий за 7 дней: ${retainedSessions}\n\n${pairGrowthText("За 7 дней", store.growthStats())}`;
+      return `Анонимный чат\n\n${statsText(store.stats())}\nСессий в журнале: ${activeSessions}\nАрхивных сессий за 7 дней: ${retainedSessions}\n\n${pairGrowthText("За 7 дней", store.growthStats())}`;
     }
     if (product === "english" && englishStore) return `English Talk Match\n\n${statsText(englishStore.stats())}\n\n${pairGrowthText("За 7 дней", englishStore.growthStats())}`;
     if (product === "game" && gameStore) return `Game Mate\n\n${statsText(gameStore.stats())}\n\n${pairGrowthText("За 7 дней", gameStore.growthStats())}`;
@@ -459,9 +477,10 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   function sessionListKeyboard(result, kind, page) {
     const keyboard = new InlineKeyboard();
     for (const session of result.items) {
+      const messages = Number(session.message_count || 0);
       const media = Number(session.media_count || 0);
       const marker = session.status === "active" ? "🟢" : "🗂";
-      keyboard.text(`${marker} #${session.id} · ${media} медиа`, `anon_session:${session.id}:${kind}:${page}`).row();
+      keyboard.text(`${marker} #${session.id} · ${messages} сообщ. · ${media} retention`, `anon_session:${session.id}:${kind}:${page}`).row();
     }
     if (page > 0) keyboard.text("← Назад", `${kind === "a" ? "anon_sessions" : "anon_retained"}:${page - 1}`);
     if ((page + 1) * SESSION_PAGE_SIZE < result.total) {
@@ -484,11 +503,11 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     const result = kind === "a"
       ? store.listActiveChatSessions(options)
       : store.listRetainedChatSessions(options);
-    const title = kind === "a" ? "Активные сессии анонимного чата" : "Медиасессии: активные и завершённые за 7 дней";
+    const title = kind === "a" ? "Активные сессии анонимного чата" : "Архив: активные и завершённые сессии за 7 дней";
     const lines = result.items.map((session, index) => {
       const number = page * SESSION_PAGE_SIZE + index + 1;
       const time = session.status === "active" ? session.last_activity_at_ms : session.ended_at_ms;
-      return `${number}. #${session.id} · ${session.status === "active" ? "активна" : "завершена"} · ${session.media_count} медиа\n${moscowDateTime(time)} МСК`;
+      return `${number}. #${session.id} · ${session.status === "active" ? "активна" : "завершена"} · ${session.message_count || 0} сообщ. · ${session.media_count} retention\n${moscowDateTime(time)} МСК`;
     });
     const text = `${title}\nВсего: ${result.total}\n\n${lines.length ? lines.join("\n\n") : "Сессий нет."}`;
     const replyMarkup = sessionListKeyboard(result, kind, page);
@@ -498,9 +517,26 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
 
   function sessionDetailKeyboard(session, listKind, page) {
     const keyboard = new InlineKeyboard();
-    if (Number(session.media_count) > 0) keyboard.text("📎 Открыть вложения", `anon_attachment:${session.id}:0`).row();
+    if (Number(session.message_count) > 0) keyboard.text("💬 Открыть переписку", `anon_message:${session.id}:0`).row();
+    if (Number(session.media_count) > 0) keyboard.text("📎 Retention-вложения", `anon_attachment:${session.id}:0`).row();
+    keyboard.text("🗑 Удалить сессию", `anon_delete:${session.id}:${listKind}:${page}`).row();
     keyboard.text("← К списку", `${listKind === "a" ? "anon_sessions" : "anon_retained"}:${page}`);
     return keyboard;
+  }
+
+  function messageNavigationKeyboard(sessionId, offset, total) {
+    const keyboard = new InlineKeyboard();
+    if (offset > 0) keyboard.text("← Предыдущее", `anon_message:${sessionId}:${offset - 1}`);
+    if (offset + 1 < total) keyboard.text("Следующее →", `anon_message:${sessionId}:${offset + 1}`);
+    if (offset > 0 || offset + 1 < total) keyboard.row();
+    keyboard.text("Сессия", `anon_session:${sessionId}:m:0`);
+    return keyboard;
+  }
+
+  function deleteSessionKeyboard(sessionId, listKind, page) {
+    return new InlineKeyboard()
+      .text("Да, удалить", `anon_delete_confirm:${sessionId}:${listKind}:${page}`)
+      .text("Отмена", `anon_session:${sessionId}:${listKind}:${page}`);
   }
 
   function mediaNavigationKeyboard(sessionId, offset, total) {
@@ -522,6 +558,58 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       await ctx.reply(caption);
       await ctx.api.sendVideoNote(ctx.chat.id, input, common);
     }
+  }
+
+  async function sendLocalMessageAttachment(ctx, message, input) {
+    const common = { protect_content: true };
+    if (message.kind === "photo") return ctx.api.sendPhoto(ctx.chat.id, input, common);
+    if (message.kind === "video") return ctx.api.sendVideo(ctx.chat.id, input, common);
+    if (message.kind === "voice") return ctx.api.sendVoice(ctx.chat.id, input, common);
+    if (message.kind === "video_note") return ctx.api.sendVideoNote(ctx.chat.id, input, common);
+    if (message.kind === "document") return ctx.api.sendDocument(ctx.chat.id, input, common);
+    if (message.kind === "sticker") return ctx.api.sendSticker(ctx.chat.id, input, common);
+    if (message.kind === "animation") return ctx.api.sendAnimation(ctx.chat.id, input, common);
+    return null;
+  }
+
+  async function sendSessionMessage(ctx, sessionId, requestedOffset) {
+    if (!requirePrivateSessionArchive(ctx)) {
+      await ctx.answerCallbackQuery({ text: "Архив доступен только в личном чате.", show_alert: true });
+      return;
+    }
+    store.purgeExpiredChatSessions();
+    const offset = Math.max(0, Number(requestedOffset) || 0);
+    const result = store.listChatSessionMessages(sessionId, { limit: 1, offset });
+    const message = result.items[0];
+    if (!message) {
+      await ctx.answerCallbackQuery({ text: "Сообщение удалено или сессия уже истекла.", show_alert: true });
+      return;
+    }
+    await ctx.answerCallbackQuery(`Сообщение ${offset + 1} из ${result.total}`);
+    const payload = message.text || message.caption || (message.kind === "sticker" ? message.sticker_emoji : "") || "";
+    const fileName = message.file_name ? `\nФайл: ${message.file_name}` : "";
+    const entry = `Сессия #${sessionId} · сообщение ${offset + 1}/${result.total}\nОтправитель: ID ${message.sender_id}\nТип: ${archivedMessageKindText(message.kind)}\n${moscowDateTime(message.created_at_ms)} МСК${fileName}${payload ? `\n\n${clippedText(payload)}` : ""}`;
+    await ctx.reply(entry, { reply_markup: messageNavigationKeyboard(sessionId, offset, result.total), protect_content: true });
+
+    if (!message.file_id) return;
+    const resolved = store.resolveChatSessionMessageAttachment(message.id);
+    if (resolved?.absolutePath) {
+      try {
+        await sendLocalMessageAttachment(ctx, message, new InputFile(resolved.absolutePath));
+        return;
+      } catch {
+        console.error(`Admin local transcript attachment delivery failed for message ${message.id}`);
+      }
+    }
+    if (options.sourceArchiveSender) {
+      try {
+        await options.sourceArchiveSender(ctx.chat.id, message);
+        return;
+      } catch {
+        console.error(`Admin source transcript attachment delivery failed for message ${message.id}`);
+      }
+    }
+    await ctx.reply("Вложение этого сообщения сейчас недоступно для просмотра.");
   }
 
   async function sendSessionMedia(ctx, sessionId, requestedOffset) {
@@ -621,7 +709,42 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
       reply_markup: sessionDetailKeyboard(session, ctx.match[2], Number(ctx.match[3]))
     });
   });
+  bot.callbackQuery(/^anon_message:(\d+):(\d+)$/, (ctx) => sendSessionMessage(ctx, Number(ctx.match[1]), Number(ctx.match[2])));
   bot.callbackQuery(/^anon_attachment:(\d+):(\d+)$/, (ctx) => sendSessionMedia(ctx, Number(ctx.match[1]), Number(ctx.match[2])));
+  bot.callbackQuery(/^anon_delete:(\d+):(a|m):(\d+)$/, async (ctx) => {
+    const sessionId = Number(ctx.match[1]);
+    const session = store.getChatSession(sessionId);
+    if (!session) {
+      await ctx.answerCallbackQuery({ text: "Сессия уже удалена.", show_alert: true });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(
+      `Удалить сессию #${sessionId} безвозвратно? Архивная переписка и локальные вложения будут удалены сразу.`,
+      { reply_markup: deleteSessionKeyboard(sessionId, ctx.match[2], Number(ctx.match[3])) }
+    );
+  });
+  bot.callbackQuery(/^anon_delete_confirm:(\d+):(a|m):(\d+)$/, async (ctx) => {
+    const sessionId = Number(ctx.match[1]);
+    const deleted = store.deleteChatSession(sessionId);
+    if (!deleted) {
+      await ctx.answerCallbackQuery({ text: "Сессия уже удалена.", show_alert: true });
+      return;
+    }
+    if (deleted.status === "active" && options.sourceSessionNotifier) {
+      for (const userId of deleted.userIds || []) {
+        try {
+          await options.sourceSessionNotifier(userId, "Чат завершён администрацией.");
+        } catch {
+          console.error(`Admin session deletion notification failed for user ${userId}`);
+        }
+      }
+    }
+    await ctx.answerCallbackQuery("Сессия удалена");
+    await ctx.editMessageText(`Сессия #${sessionId} удалена.`, {
+      reply_markup: new InlineKeyboard().text("← К списку", `${ctx.match[2] === "a" ? "anon_sessions" : "anon_retained"}:${Number(ctx.match[3])}`)
+    });
+  });
   bot.command("health", (ctx) => ctx.reply(healthText(), { reply_markup: adminKeyboard }));
   bot.hears("💚 Состояние", (ctx) => ctx.reply(healthText(), { reply_markup: adminKeyboard }));
   bot.command("daily", (ctx) => ctx.reply(dailyReportText(), { reply_markup: adminKeyboard }));
