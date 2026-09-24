@@ -13,6 +13,9 @@
 | Телеграм.Меню | https://telegram.menu/add | Анонимный чат 12+ | `src_catalog_telegrammenu` | заявка успешно отправлена 24.09.2026, ожидает модерации |
 | TCatalog | https://t-catalog.com/add/ | Анонимный чат 12+ | `src_catalog_tcatalog` | предложение успешно отправлено 24.09.2026, ожидает ручной проверки |
 | Telegram Store | https://telegramstore.org/add | Анонимный чат 12+ | — | заявка успешно отправлена 24.09.2026; статус: https://telegramstore.org/status/0a8fd80e-723c-4be1-936c-42a297c61cbf; модерация обычно до 48 часов |
+| BestTelegram | http://besttelegram.com/submit | TerraTectra Anonymous Chat 12+ | `src_catalog_besttelegram` | заявка успешно принята 24.09.2026; проверка 24–48 часов |
+| TopTelegramBots | https://toptelegrambots.com/list-telegram-bot | TerraTectra Anonymous Chat 12+ | — | карточка подготовлена, но отправка упирается в Telegram-верификацию/виджет |
+| GramBots | https://www.grambots.com/ | Анонимный чат 12+ | — | добавление доступно только через Telegram-бот каталога |
 | TgBotList | https://telegram-bot-list.com/ | Анонимный чат 12+ | — | данные бота приняты, для завершения требуется подтверждение через Telegram |
 | Bothost | https://bothost.ru/katalog-botov | Анонимный чат 12+ | `src_catalog_bothost` | заявка успешно принята 24.09.2026 после повторной отправки; модерация до 48 часов |
 | TGPin | https://tgpin.com/ru/add/ | Анонимный чат 12+ | — | требует вход через Telegram |
