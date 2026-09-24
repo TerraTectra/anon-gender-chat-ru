@@ -7,6 +7,16 @@
 | Каталог Телеграм | https://katalogtelegram.ru/dobavit | TerraTectra Bots | `src_catalog_katalogtelegram` | заявка отправлена 13.07.2026, модерация до 72 часов |
 | Tgram | https://tgram.ru/bots/ | TerraTectra Bots | `src_catalog_tgram` | ожидает модерации; после проверки каталог запросит оплату, не оплачивать без отдельного решения |
 | AllTelegram | https://alltelegram.com/ru/contact | TerraTectra Bots | `src_catalog_alltelegram` | заявка успешно отправлена 13.07.2026, ожидается ответ модерации |
+| TG Catalog | https://www.catalogtelegram.ru/ | Анонимный чат 12+ | `src_catalog_catalogtelegram` | карточка уже опубликована; проверено 24.09.2026 |
+| TLGBOT | https://tlgbot.ru/add | Анонимный чат 12+ | `src_catalog_tlgbot` | заявка отправлена 24.09.2026, ожидает модерации |
+| HotBots | https://hotbots.online/ru/add-bot/ | Анонимный чат 12+ | `src_catalog_hotbots` | заявка отправлена 24.09.2026, сайт подтвердил приём; проверка до двух рабочих дней |
+| Телеграм.Меню | https://telegram.menu/add | Анонимный чат 12+ | `src_catalog_telegrammenu` | заявка успешно отправлена 24.09.2026, ожидает модерации |
+| TCatalog | https://t-catalog.com/add/ | Анонимный чат 12+ | `src_catalog_tcatalog` | предложение успешно отправлено 24.09.2026, ожидает ручной проверки |
+| Bothost | https://bothost.ru/katalog-botov | Анонимный чат 12+ | `src_catalog_bothost` | форма заполнена 24.09.2026, отправка упала с «Ошибка сети»; повторить позже |
+| TGPin | https://tgpin.com/ru/add/ | Анонимный чат 12+ | — | требует вход через Telegram |
+| miniTelegram | https://minitelegram.com/ru/dashboard/new | Анонимный чат 12+ | — | требует вход через Telegram |
+| TeleTop | https://teletop.app/add | Анонимный чат 12+ | — | требует вход через Telegram |
+| ТГДЫК | https://tgdyk.com/add-bot | Анонимный чат 12+ | — | требует вход через Telegram |
 
 ## Карточка хаба
 
@@ -30,3 +40,7 @@
 - переходы из хаба к конкретным продуктам;
 - первые полезные действия;
 - повторную активность и обращения на разработку.
+
+## Поисковое продвижение
+
+24.09.2026 через IndexNow принудительно отправлены на переобход основные страницы анонимного чата и страницы сети TerraTectra. API подтвердил приём HTTP 200. Для подтверждения владения используется уже опубликованный ключ `b9f6d6d8d3b149e4a7bc9f44c0b25a63.txt`.
