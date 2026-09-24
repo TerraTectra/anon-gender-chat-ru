@@ -1,7 +1,7 @@
 import "dotenv/config";
 
 const profiles = [
-  ["BOT_TOKEN", "Анонимный чат один на один: случайный и фильтрованный поиск, возрастные группы 12-17 и 18+ разделены.", "Безопасное анонимное общение один на один 12+."],
+  ["BOT_TOKEN", "Анонимный чат 1-на-1 на русском: случайный и фильтрованный поиск, фото, видео и голосовые, жалобы и модерация. Группы 12–17 и 18+ разделены.", "Анонимный чат 1-на-1: быстрый поиск, фильтры и модерация."],
   ["ADMIN_BOT_TOKEN", "Приватный центр управления TerraTectra: боты, активные и медиасессии анонимного чата, каналы, источники, лиды и состояние системы.", "Приватная аналитика и управление TerraTectra."],
   ["ENGLISH_BOT_TOKEN", "Находит музыку по запросу или публичной ссылке и возвращает аудиофайл в Telegram. Без DRM и приватного доступа.", "Поиск и загрузка музыки из публичных источников."],
   ["FOCUS_BOT_TOKEN", "Случайные числа, выбор из списка, монетка, кубик и перемешивание прямо в Telegram.", "Рандомайзер, жеребьёвки и выбор победителя."],
@@ -32,4 +32,21 @@ for (const [envName, description, shortDescription] of profiles) {
   const saved = await telegram(token, "getMyShortDescription", {});
   if (saved.short_description !== shortDescription) throw new Error(`${envName}: profile verification failed`);
   console.log(`${envName}: updated`);
+}
+
+const userToken = process.env.BOT_TOKEN?.trim();
+if (userToken) {
+  const commands = [
+    { command: "start", description: "Открыть анонимный чат" },
+    { command: "search", description: "Найти случайного собеседника" },
+    { command: "filters", description: "Поиск с фильтром" },
+    { command: "next", description: "Следующий собеседник" },
+    { command: "stop", description: "Завершить чат или поиск" },
+    { command: "invite", description: "Позвать друга" },
+    { command: "privacy", description: "Как хранится переписка" }
+  ];
+  await telegram(userToken, "setMyCommands", { commands });
+  const savedCommands = await telegram(userToken, "getMyCommands", {});
+  if (savedCommands.length !== commands.length) throw new Error("BOT_TOKEN: commands verification failed");
+  console.log("BOT_TOKEN: commands updated");
 }

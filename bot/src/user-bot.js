@@ -16,7 +16,7 @@ import {
 const profileReady = (user) => Boolean(user?.gender && user?.age);
 const displayGender = (value) => value === "male" ? "парень" : "девушка";
 const TELEGRAM_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024;
-const MEDIA_RETENTION_NOTICE = "Во время активного чата переписка и вложения записываются для модерации. Если в сессии не было фото, видео или кружков, запись удаляется сразу после завершения. Если такие медиа были, вся переписка вместе с вложениями хранится в защищённом архиве до 7 суток после завершения.";
+const MEDIA_RETENTION_NOTICE = "Для модерации переписка и вложения записываются во время активного чата. Если фото, видео и кружков не было, запись удаляется сразу после завершения. Если были — переписка и вложения хранятся в защищённом архиве до 7 суток.";
 
 export function isBotBlockedByUserError(error) {
   const code = Number(error?.error_code ?? error?.error?.error_code ?? error?.response?.error_code ?? 0);
@@ -144,8 +144,18 @@ export function retainedMediaFromMessage(message) {
   return null;
 }
 
-export function postChatKeyboard() {
-  return new InlineKeyboard()
+export function postChatKeyboard(userId = null, botUsername = null) {
+  const keyboard = new InlineKeyboard()
+    .text("🎲 Найти ещё", "postchat:search");
+
+  if (Number.isSafeInteger(Number(userId)) && botUsername) {
+    const referralLink = `https://t.me/${botUsername}?start=ref_${Number(userId)}`;
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent("Залетай в анонимный чат — чем больше людей онлайн, тем быстрее находится собеседник.")}`;
+    keyboard.url("📤 Позвать друга", shareUrl);
+  }
+
+  return keyboard
+    .row()
     .url("📥 Скачать видео", "https://t.me/TectraQuizBot?start=src_anon_postchat_video")
     .url("💞 Знакомства 18+", "https://t.me/GameMateFinderRuBot?start=src_anon_postchat_dating");
 }
@@ -387,7 +397,11 @@ export function createUserBot(token, dbPath, options = {}) {
         noteDeliveryFailure(result.partnerId, error);
       }
     } else {
-      await ctx.reply("Ищу собеседника. Напишу, как только появится подходящая пара.", { reply_markup: menuKeyboard });
+      const referralLink = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
+      await ctx.reply(
+        "Ищу собеседника. Напишу, как только появится подходящая пара. Пока ждёте, можно позвать друга — чем больше людей онлайн, тем быстрее находится собеседник.",
+        { reply_markup: inviteKeyboard(referralLink, "Залетай в анонимный чат — чем больше людей онлайн, тем быстрее находится собеседник.") }
+      );
     }
   }
 
@@ -455,8 +469,20 @@ export function createUserBot(token, dbPath, options = {}) {
     ctx.session.step = null;
     ctx.session.pendingReportId = null;
     const message = partnerId ? "Чат завершён." : user?.state === "searching" ? "Поиск остановлен." : "Вы не участвуете в чате или поиске.";
-    await ctx.reply(message, { reply_markup: partnerId ? postChatKeyboard() : menuKeyboard });
-    await notifyPartner(ctx, partnerId, "Собеседник завершил чат.", postChatKeyboard());
+    await ctx.reply(message, {
+      reply_markup: partnerId ? postChatKeyboard(ctx.from.id, ctx.me.username) : menuKeyboard
+    });
+    await notifyPartner(
+      ctx,
+      partnerId,
+      "Собеседник завершил чат.",
+      postChatKeyboard(partnerId, ctx.me.username)
+    );
+  });
+
+  bot.callbackQuery("postchat:search", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await startSearch(ctx, "random");
   });
 
   registerAction(labels.next, "next", async (ctx) => {
