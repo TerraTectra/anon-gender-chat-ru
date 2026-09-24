@@ -12,6 +12,8 @@
 | HotBots | https://hotbots.online/ru/add-bot/ | Анонимный чат 12+ | `src_catalog_hotbots` | заявка отправлена 24.09.2026, сайт подтвердил приём; проверка до двух рабочих дней |
 | Телеграм.Меню | https://telegram.menu/add | Анонимный чат 12+ | `src_catalog_telegrammenu` | заявка успешно отправлена 24.09.2026, ожидает модерации |
 | TCatalog | https://t-catalog.com/add/ | Анонимный чат 12+ | `src_catalog_tcatalog` | предложение успешно отправлено 24.09.2026, ожидает ручной проверки |
+| Telegram Store | https://telegramstore.org/add | Анонимный чат 12+ | — | заявка успешно отправлена 24.09.2026; статус: https://telegramstore.org/status/0a8fd80e-723c-4be1-936c-42a297c61cbf; модерация обычно до 48 часов |
+| TgBotList | https://telegram-bot-list.com/ | Анонимный чат 12+ | — | данные бота приняты, для завершения требуется подтверждение через Telegram |
 | Bothost | https://bothost.ru/katalog-botov | Анонимный чат 12+ | `src_catalog_bothost` | форма заполнена 24.09.2026, отправка упала с «Ошибка сети»; повторить позже |
 | TGPin | https://tgpin.com/ru/add/ | Анонимный чат 12+ | — | требует вход через Telegram |
 | miniTelegram | https://minitelegram.com/ru/dashboard/new | Анонимный чат 12+ | — | требует вход через Telegram |
