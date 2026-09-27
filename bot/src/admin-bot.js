@@ -13,6 +13,7 @@ import { products as catalogProducts } from "./products.js";
 import { safeErrorSummary } from "./safe-error.js";
 import { TaskStore } from "./task-store.js";
 import { Store } from "./store.js";
+import { installTelegramReliability, createSingleFlightRetry } from './telegram-reliability.js';
 
 function parseAdmins(value = "") {
   return new Set(value.split(",").map((item) => Number(item.trim())).filter(Number.isSafeInteger));
@@ -148,7 +149,8 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   const quizStore = options.quizDbPath ? new EngagementStore(options.quizDbPath) : null;
   const partyStore = options.partyDbPath ? new EngagementStore(options.partyDbPath) : null;
   const admins = parseAdmins(adminIds);
-  const bot = new Bot(token);
+  const bot = new Bot(token, { client: { timeoutSeconds: 70 } });
+  installTelegramReliability(bot);
   const healthPath = path.resolve(options.healthPath || "./data/health.json");
   const reportStatePath = path.resolve(options.reportStatePath || "./data/admin-report-state.json");
   const reportHour = Number.isInteger(options.reportHour) ? options.reportHour : 10;
@@ -343,12 +345,16 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
 
   bot.startDailyReportScheduler = () => {
     if (reportTimer) return;
+    const sendOnce = createSingleFlightRetry(async () => {
+      const now = moscowTimeParts();
+      await sendDailyReport();
+      saveLastReportDate(now.date);
+    });
     reportTimer = setInterval(async () => {
       const now = moscowTimeParts();
       if (now.hour < reportHour || readLastReportDate() === now.date) return;
       try {
-        await sendDailyReport();
-        saveLastReportDate(now.date);
+        await sendOnce();
       } catch (error) {
         console.error("Daily admin report error", safeErrorSummary(error));
       }

@@ -15,6 +15,7 @@ import {
 } from "./niche-bots.js";
 import { createUserBot } from "./user-bot.js";
 import { menuKeyboard } from "./keyboards.js";
+import { installTelegramReliability } from './telegram-reliability.js';
 import { isTelegramPollingConflict, safeErrorSummary } from "./safe-error.js";
 import { acquireSingleInstance, AlreadyRunningError, SINGLE_INSTANCE_EXIT_CODE } from "./single-instance.js";
 
@@ -130,6 +131,10 @@ function writeHealth(status = healthStatus, details = {}) {
     status,
     updated_at: new Date().toISOString(),
     bots: botCount,
+    pid: process.pid,
+    uptime_seconds: Math.round(process.uptime()),
+    anon_polling: userBot.pollingState(),
+    anon_api: userBot.telegramMetrics(),
     channels: channelPublisher.status().filter((channel) => channel.enabled).length,
     ...details
   }, null, 2);
@@ -146,8 +151,8 @@ function writeHealth(status = healthStatus, details = {}) {
   }
 }
 writeHealth("starting");
-const healthTimer = setInterval(() => writeHealth(), 30_000);
-const readyTimer = setTimeout(() => writeHealth("running"), 5_000);
+const healthTimer = setInterval(() => writeHealth(userBot.pollingState().running ? 'running' : 'starting'), 30_000);
+const readyTimer = setTimeout(() => writeHealth(userBot.pollingState().running ? 'running' : 'starting'), 5_000);
 let shutdownPromise = null;
 
 function safely(callback) {
@@ -165,20 +170,14 @@ function shutdown(status = "stopped", details = {}) {
     clearTimeout(readyTimer);
     writeHealth(status, details);
     safely(() => userBot.stopSessionRetention());
-    safely(() => userBot.stop());
+    await userBot.stopConcurrent();
     safely(() => adminBot.stopDailyReportScheduler());
     safely(() => channelPublisher.stop());
-    safely(() => adminBot.stop());
-    safely(() => englishBot?.stop());
-    safely(() => focusBot?.stop());
-    safely(() => gameBot?.stop());
-    safely(() => budgetBot?.stop());
-    safely(() => hubBot?.stop());
-    safely(() => taskBot?.stop());
-    safely(() => quizBot?.stop());
-    safely(() => partyBot?.stop());
+    await Promise.allSettled([adminBot, englishBot, focusBot, gameBot, budgetBot, hubBot, taskBot, quizBot, partyBot]
+      .filter(Boolean).map(bot => Promise.resolve().then(() => bot.stop())));
     try {
-      await userBot.drainArchiveJobs?.();
+      await userBot.drainSessionMaintenance();
+      await userBot.drainArchiveJobs?.(90_000);
     } catch {
       // Archive jobs are best-effort during shutdown; stores still close cleanly below.
     }
@@ -201,11 +200,12 @@ process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
 
 const publicNicheBots = [englishBot, focusBot, gameBot, budgetBot, hubBot, taskBot, quizBot, partyBot].filter(Boolean);
+for (const bot of publicNicheBots) installTelegramReliability(bot);
 await Promise.allSettled(publicNicheBots.map((bot) => bot.syncProfile?.()));
 
 console.log(`Starting ${botCount} bots in long-polling mode`);
 const starts = [
-  userBot.start({ drop_pending_updates: false }),
+  userBot.startConcurrent(),
   adminBot.start({ drop_pending_updates: false })
 ];
 if (englishBot) starts.push(englishBot.start({ drop_pending_updates: false }));

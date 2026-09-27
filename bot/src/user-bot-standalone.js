@@ -26,17 +26,19 @@ const stop = async () => {
   stopping = true;
   bot.stopSessionRetention();
   try {
-    bot.stop();
+    await bot.stopConcurrent();
   } catch {
     // Startup may have failed before polling began.
   }
+  await bot.drainSessionMaintenance();
+  await bot.drainArchiveJobs(70_000);
   bot.closeStore();
   await instanceLock.release();
 };
 process.once("SIGINT", () => void stop());
 process.once("SIGTERM", () => void stop());
 try {
-  await bot.start({ drop_pending_updates: false });
+  await bot.startConcurrent();
 } catch (error) {
   const conflict = isTelegramPollingConflict(error);
   console.error(conflict ? `Telegram polling conflict: ${safeErrorSummary(error)}` : `User bot failed: ${safeErrorSummary(error)}`);

@@ -127,6 +127,11 @@ export class Store {
     fs.mkdirSync(path.dirname(absolute), { recursive: true });
     this.db = new DatabaseSync(absolute);
     this.db.exec(SCHEMA);
+    this.db.exec('PRAGMA busy_timeout = 3000');
+    if (!this.db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'search_mode')) {
+      this.db.exec("ALTER TABLE users ADD COLUMN search_mode TEXT NOT NULL DEFAULT 'random'");
+      this.db.exec("UPDATE users SET search_mode = COALESCE((SELECT mode FROM queue WHERE user_id=users.id), 'random')");
+    }
     const archiveRoot = path.resolve(
       options.sessionArchiveRoot || path.join(path.dirname(absolute), `${path.basename(absolute, path.extname(absolute))}-session-archive`)
     );
@@ -311,7 +316,7 @@ export class Store {
   }
 
   setProfile(id, patch) {
-    const allowed = new Set(["gender", "age", "state", "filter_gender", "filter_min_age", "filter_max_age"]);
+    const allowed = new Set(["gender", "age", "state", "filter_gender", "filter_min_age", "filter_max_age", "search_mode"]);
     const entries = Object.entries(patch).filter(([key]) => allowed.has(key));
     if (!entries.length) return this.getUser(id);
     const sql = entries.map(([key]) => `${key} = ?`).join(", ");
@@ -387,6 +392,8 @@ export class Store {
         block_reason = excluded.block_reason,
         updated_at = CURRENT_TIMESTAMP
     `).run(userId, String(reason).slice(0, 160));
+    this.db.prepare('DELETE FROM queue WHERE user_id=?').run(userId);
+    this.db.prepare("UPDATE users SET state='idle' WHERE id=? AND partner_id IS NULL").run(userId);
   }
 
   accessStats() {
@@ -439,6 +446,7 @@ export class Store {
   enqueue(userId, mode, targetGender = "any", minAge = 12, maxAge = 99) {
     const current = this.getUser(userId);
     if (!current?.gender || !current?.age) return { status: "profile_required" };
+    if (this.isBanned(userId)) return { status: "unavailable" };
     if (mode === "filtered" && this.filteredRemaining(userId) <= 0) {
       return { status: "limit" };
     }
@@ -448,14 +456,19 @@ export class Store {
       INSERT OR REPLACE INTO queue (user_id, mode, target_gender, min_age, max_age, created_at)
       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `).run(userId, mode, targetGender, minAge, maxAge);
-    this.setProfile(userId, { state: "searching" });
+    this.setProfile(userId, { state: "searching", search_mode: mode });
     return this.tryMatch(userId);
   }
 
   tryMatch(userId) {
     const user = this.getUser(userId);
     const ownQueue = this.db.prepare("SELECT * FROM queue WHERE user_id = ?").get(userId);
-    if (!ownQueue) return { status: "waiting" };
+    if (!ownQueue || this.isBanned(userId)) return { status: "waiting" };
+    if (ownQueue.mode === 'filtered' && this.filteredRemaining(userId) <= 0) {
+      this.db.prepare('DELETE FROM queue WHERE user_id=?').run(userId);
+      this.setProfile(userId,{state:'idle'});
+      return {status:'limit'};
+    }
 
     const candidates = this.db.prepare(`
       SELECT u.*, q.mode AS q_mode, q.target_gender AS q_target_gender,
@@ -464,6 +477,8 @@ export class Store {
       JOIN users u ON u.id = q.user_id
       WHERE q.user_id != ?
         AND u.partner_id IS NULL
+        AND u.gender IS NOT NULL AND u.age IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM bot_access access WHERE access.user_id=u.id AND access.status='blocked')
         AND NOT EXISTS (SELECT 1 FROM bans x WHERE x.user_id = u.id)
         AND NOT EXISTS (
           SELECT 1 FROM blocks b
@@ -479,7 +494,7 @@ export class Store {
       minAge: ownQueue.min_age,
       maxAge: ownQueue.max_age
     };
-    const match = candidates.find((candidate) => queuesAreCompatible(
+    const match = candidates.find((candidate) => (candidate.q_mode !== 'filtered' || this.filteredRemaining(candidate.id) > 0) && queuesAreCompatible(
       leftQueue,
       { gender: user.gender, age: user.age },
       {
@@ -526,7 +541,7 @@ export class Store {
     this.db.prepare("DELETE FROM queue WHERE user_id = ?").run(userId);
     this.db.prepare("UPDATE users SET partner_id = NULL, state = 'idle' WHERE id = ?").run(userId);
     if (user?.partner_id) {
-      this.db.prepare("UPDATE users SET partner_id = NULL, state = 'idle' WHERE id = ?").run(user.partner_id);
+      this.db.prepare("UPDATE users SET partner_id = NULL, state = 'idle' WHERE id = ? AND partner_id = ?").run(user.partner_id, userId);
       try {
         this.sessionArchive.endByUser(userId, reason, now);
       } catch (error) {

@@ -1,5 +1,7 @@
 import path from "node:path";
 import { Bot, InlineKeyboard, session } from "grammy";
+import { sequentialize, run } from '@grammyjs/runner';
+import { installTelegramReliability } from './telegram-reliability.js';
 import { Store } from "./store.js";
 import { createCatalogHandler } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
@@ -162,7 +164,21 @@ export function postChatKeyboard(userId = null, botUsername = null) {
 
 export function createUserBot(token, dbPath, options = {}) {
   const store = options.store ?? new Store(dbPath, { sessionArchiveRoot: options.sessionArchiveRoot });
-  const bot = new Bot(token);
+  const bot = new Bot(token, { client: { timeoutSeconds: 70 } });
+  installTelegramReliability(bot, { onForbidden: id => store.markBotBlocked(id) });
+  let runner;
+  let pollingStopping = false;
+  bot.startConcurrent = async () => {
+    if (pollingStopping) return;
+    await bot.init();
+    if (pollingStopping) return;
+    await bot.api.deleteWebhook({ drop_pending_updates: false });
+    if (pollingStopping) return;
+    runner = run(bot, { sink: { concurrency: 24 }, runner: { fetch: { timeout: 30, allowed_updates: ['message','callback_query','my_chat_member'] }, maxRetryTime: 5 * 60_000, retryInterval: 'exponential' } });
+    return runner.task();
+  };
+  bot.stopConcurrent = async () => { pollingStopping = true; if (runner) await runner.stop(); };
+  bot.pollingState = () => ({ running: Boolean(runner?.isRunning()), inFlight: runner?.size() || 0 });
   const showCatalog = createCatalogHandler("anon");
   // Keep button actions and slash commands routed to exactly the same handler.
   const registerAction = (label, command, handler) => {
@@ -214,15 +230,32 @@ export function createUserBot(token, dbPath, options = {}) {
       sessionMaintenanceRunning = false;
     }
   }
-  const retentionTimer = setInterval(() => void runSessionMaintenance(), 15 * 60 * 1000);
+  let maintenancePromise = Promise.resolve();
+  const startMaintenance = () => {
+    if (!sessionMaintenanceRunning) maintenancePromise = runSessionMaintenance();
+    return maintenancePromise;
+  };
+  bot.drainSessionMaintenance = () => maintenancePromise;
+  const retentionTimer = setInterval(() => void startMaintenance(), 15 * 60 * 1000);
   retentionTimer.unref?.();
-  const initialMaintenanceTimer = setTimeout(() => void runSessionMaintenance(), 5_000);
+  const initialMaintenanceTimer = setTimeout(() => void startMaintenance(), 5_000);
   initialMaintenanceTimer.unref?.();
   bot.stopSessionRetention = () => {
     clearInterval(retentionTimer);
     clearTimeout(initialMaintenanceTimer);
   };
   bot.closeStore = () => store.close();
+  // Preserve per-user order before calculating current pair dependencies.
+  bot.use(sequentialize(ctx => ctx.from ? String(ctx.from.id) : undefined));
+  bot.use(sequentialize(ctx => {
+    if (!ctx.from) return [];
+    const keys = [String(ctx.from.id)];
+    const partner = store.getUser(ctx.from.id)?.partner_id;
+    if (partner) keys.push(String(partner));
+    const text = ctx.message?.text || '';
+    if (ctx.callbackQuery || text.startsWith('/') || Object.values(labels).includes(text)) keys.push('matchmaking');
+    return keys;
+  }));
   bot.use(session({ initial: () => ({ step: null, pendingReportId: null }) }));
 
   bot.use(async (ctx, next) => {
@@ -377,11 +410,16 @@ export function createUserBot(token, dbPath, options = {}) {
       await ctx.reply("Сначала создадим короткий профиль. Кто вы?", { reply_markup: genderKeyboard });
       return;
     }
+    if (mode === 'filtered' && store.filteredRemaining(ctx.from.id) <= 0) {
+      await ctx.reply('Сегодня использованы все 50 фильтрованных совпадений. Текущий чат сохранён. Случайный поиск остаётся без лимита.', { reply_markup: menuKeyboard });
+      return;
+    }
     if (user.partner_id) {
       const previous = store.disconnect(ctx.from.id, "new_search");
       await notifyPartner(ctx, previous, "\u0421\u043e\u0431\u0435\u0441\u0435\u0434\u043d\u0438\u043a \u043d\u0430\u0447\u0430\u043b \u043d\u043e\u0432\u044b\u0439 \u043f\u043e\u0438\u0441\u043a.");
     }
     ctx.session.step = null;
+    ctx.session.pendingReportId = null;
     store.recordEvent(ctx.from.id, "search");
     const result = store.enqueue(ctx.from.id, mode, filter.targetGender, filter.minAge, filter.maxAge);
     if (result.status === "limit") {
@@ -389,12 +427,20 @@ export function createUserBot(token, dbPath, options = {}) {
     } else if (result.status === "matched") {
       store.recordEvent(ctx.from.id, "match");
       const message = "Собеседник найден. Можно писать сообщение.";
-      await ctx.reply(message, { reply_markup: menuKeyboard });
-      try {
-        await ctx.api.sendMessage(result.partnerId, message, { reply_markup: menuKeyboard });
-        store.markDeliverySuccess(result.partnerId);
-      } catch (error) {
-        noteDeliveryFailure(result.partnerId, error);
+      const outcomes = await Promise.allSettled([
+        ctx.api.sendMessage(ctx.from.id, message, {reply_markup:menuKeyboard}),
+        ctx.api.sendMessage(result.partnerId, message, {reply_markup:menuKeyboard})
+      ]);
+      const ids = [ctx.from.id, result.partnerId];
+      let blocked = false;
+      outcomes.forEach((outcome, n) => {
+        if (outcome.status === 'fulfilled') store.markDeliverySuccess(ids[n]);
+        else if (noteDeliveryFailure(ids[n], outcome.reason)) blocked = true;
+      });
+      if (blocked && store.getUser(ctx.from.id)?.partner_id === result.partnerId) {
+        store.disconnect(ctx.from.id, 'partner_unavailable');
+        await Promise.allSettled(ids.filter((_, n) => outcomes[n].status === 'fulfilled').map(id =>
+          ctx.api.sendMessage(id, 'Собеседник недоступен. Начните новый поиск.', {reply_markup:menuKeyboard})));
       }
     } else {
       const referralLink = `https://t.me/${ctx.me.username}?start=ref_${ctx.from.id}`;
@@ -421,6 +467,10 @@ export function createUserBot(token, dbPath, options = {}) {
   bot.command("privacy", (ctx) => ctx.reply(MEDIA_RETENTION_NOTICE, { reply_markup: menuKeyboard }));
 
   bot.callbackQuery(/^profile_gender:(male|female)$/, async (ctx) => {
+    if (profileReady(store.getUser(ctx.from.id)) && ctx.session.step !== 'gender') {
+      await ctx.answerCallbackQuery({ text: 'Это старая кнопка. Для изменения профиля используйте /reset.', show_alert: true });
+      return;
+    }
     store.upsertUser(ctx.from.id, ctx.from.username);
     store.setProfile(ctx.from.id, { gender: ctx.match[1], state: "onboarding" });
     ctx.session.step = "age";
@@ -429,6 +479,10 @@ export function createUserBot(token, dbPath, options = {}) {
   });
 
   bot.callbackQuery(/^filter_gender:(male|female|any)$/, async (ctx) => {
+    if (!profileReady(store.getUser(ctx.from.id)) || ctx.session.step !== 'filter_gender') {
+      await ctx.answerCallbackQuery('Начните настройку заново: /filters');
+      return;
+    }
     store.setProfile(ctx.from.id, { filter_gender: ctx.match[1] });
     ctx.session.step = "filter_age";
     await ctx.answerCallbackQuery();
@@ -443,7 +497,7 @@ export function createUserBot(token, dbPath, options = {}) {
 
   bot.callbackQuery("report:confirm", async (ctx) => {
     const reportedId = ctx.session.pendingReportId;
-    if (!reportedId) {
+    if (!reportedId || store.getUser(ctx.from.id)?.partner_id !== reportedId) {
       await ctx.answerCallbackQuery("Собеседник уже отключён");
       return;
     }
@@ -487,9 +541,7 @@ export function createUserBot(token, dbPath, options = {}) {
 
   registerAction(labels.next, "next", async (ctx) => {
     const user = store.getUser(ctx.from.id);
-    const partnerId = store.disconnect(ctx.from.id, "next");
-    await notifyPartner(ctx, partnerId, "Собеседник переключился на следующий чат.");
-    await startSearch(ctx, user?.filter_gender && user.filter_gender !== "any" ? "filtered" : "random", {
+    await startSearch(ctx, user?.search_mode === 'filtered' ? 'filtered' : 'random', {
       targetGender: user?.filter_gender ?? "any",
       minAge: user?.filter_min_age ?? 12,
       maxAge: user?.filter_max_age ?? 99
@@ -552,7 +604,7 @@ export function createUserBot(token, dbPath, options = {}) {
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) {
-      await ctx.reply("Unknown command. Use /search, /filters, or /stop.", { reply_markup: menuKeyboard });
+      await ctx.reply("Неизвестная команда. Используйте /search, /filters или /stop.", { reply_markup: menuKeyboard });
       return;
     }
     if (ctx.session.step === "age") {
@@ -590,11 +642,16 @@ export function createUserBot(token, dbPath, options = {}) {
       await ctx.api.copyMessage(user.partner_id, ctx.chat.id, ctx.message.message_id);
       store.markDeliverySuccess(user.partner_id);
     } catch (error) {
-      noteDeliveryFailure(user.partner_id, error);
-      store.disconnect(ctx.from.id, "delivery_failed");
+      const blocked = noteDeliveryFailure(user.partner_id, error);
+      if (blocked && store.getUser(ctx.from.id)?.partner_id === user.partner_id) store.disconnect(ctx.from.id, "delivery_failed");
+      if (!blocked) {
+        await ctx.reply('Telegram временно не подтвердил доставку. Чат не закрыт. Проверьте у собеседника, получил ли он сообщение, прежде чем отправлять повторно.', { reply_markup: menuKeyboard });
+        return;
+      }
       await ctx.reply("Не удалось доставить сообщение. Возможно, собеседник заблокировал бота.", { reply_markup: menuKeyboard });
       return;
     }
+    if (store.getUser(ctx.from.id)?.partner_id !== user.partner_id) return;
     await archiveDeliveredMessage(ctx);
   });
 
@@ -608,16 +665,30 @@ export function createUserBot(token, dbPath, options = {}) {
       await ctx.api.copyMessage(user.partner_id, ctx.chat.id, ctx.message.message_id);
       store.markDeliverySuccess(user.partner_id);
     } catch (error) {
-      noteDeliveryFailure(user.partner_id, error);
-      store.disconnect(ctx.from.id, "delivery_failed");
+      const blocked = noteDeliveryFailure(user.partner_id, error);
+      if (blocked && store.getUser(ctx.from.id)?.partner_id === user.partner_id) store.disconnect(ctx.from.id, "delivery_failed");
+      if (!blocked) {
+        await ctx.reply('Telegram временно не подтвердил доставку. Чат не закрыт. Проверьте у собеседника, получил ли он сообщение, прежде чем отправлять повторно.', { reply_markup: menuKeyboard });
+        return;
+      }
       await ctx.reply("Не удалось доставить сообщение.", { reply_markup: menuKeyboard });
       return;
     }
+    if (store.getUser(ctx.from.id)?.partner_id !== user.partner_id) return;
     await archiveDeliveredMessage(ctx);
     const media = retainedMediaFromMessage(ctx.message);
     if (media) queueArchiveJob(archiveRetainedMedia(ctx, media));
   });
 
-  bot.catch((error) => console.error("User bot error", safeErrorSummary(error)));
+  bot.on('my_chat_member', ctx => {
+    if (ctx.chat?.type === 'private' && ctx.myChatMember.new_chat_member.status === 'kicked') store.markBotBlocked(ctx.chat.id);
+  });
+  bot.catch(error => {
+    if (error.ctx?.from && isBotBlockedByUserError(error.error)) {
+      store.markBotBlocked(error.ctx.from.id);
+      return;
+    }
+    console.error('User bot error', safeErrorSummary(error));
+  });
   return bot;
 }

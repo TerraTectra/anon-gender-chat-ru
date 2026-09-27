@@ -17,6 +17,7 @@
     "node": ">=22.5"
   },
   "dependencies": {
+    "@grammyjs/runner": "2.0.3",
     "dotenv": "^17.2.3",
     "grammy": "^1.38.3"
   }
