@@ -1,4 +1,5 @@
 import path from "node:path";
+import { telegramClientOptions } from "./telegram-transport.js";
 import { Bot, InlineKeyboard, session } from "grammy";
 import { sequentialize, run } from '@grammyjs/runner';
 import { installTelegramReliability } from './telegram-reliability.js';
@@ -165,7 +166,7 @@ export function postChatKeyboard(userId = null, botUsername = null) {
 
 export function createUserBot(token, dbPath, options = {}) {
   const store = options.store ?? new Store(dbPath, { sessionArchiveRoot: options.sessionArchiveRoot });
-  const bot = new Bot(token, { client: { timeoutSeconds: 70 } });
+  const bot = new Bot(token, { client: telegramClientOptions() });
   installTelegramReliability(bot, { onForbidden: id => store.markBotBlocked(id) });
   const { showPremium, showVisibility } = installPremium(bot, store, { adminIds: options.adminIds });
   let runner;
@@ -176,7 +177,7 @@ export function createUserBot(token, dbPath, options = {}) {
     if (pollingStopping) return;
     await bot.api.deleteWebhook({ drop_pending_updates: false });
     if (pollingStopping) return;
-    runner = run(bot, { sink: { concurrency: 24 }, runner: { fetch: { timeout: 30, allowed_updates: ['message','callback_query','my_chat_member','pre_checkout_query'] }, maxRetryTime: 5 * 60_000, retryInterval: 'exponential' } });
+    runner = run(bot, { sink: { concurrency: 24 }, runner: { fetch: { timeout: 10, allowed_updates: ['message','callback_query','my_chat_member','pre_checkout_query'] }, maxRetryTime: 5 * 60_000, retryInterval: 'exponential', silent: true } });
     bot.startPremiumReconciliation();
     return runner.task();
   };

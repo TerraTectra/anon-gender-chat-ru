@@ -2,6 +2,7 @@ import { InlineKeyboard } from 'grammy';
 import { PLANS } from './premium-store.js';
 import { labels, menuKeyboard } from './keyboards.js';
 import { safeErrorSummary } from './safe-error.js';
+import { readPaymentBatch } from './payment-reconciliation.js';
 
 const ready = user => Boolean(user?.gender && user?.age);
 export const premiumDate = timestamp => new Date(timestamp).toLocaleString('ru-RU', {timeZone:'Europe/Moscow',dateStyle:'medium',timeStyle:'short'}) + ' МСК';
@@ -124,14 +125,10 @@ export function installPremium(bot,store,options={}) {
  async function reconcile(){
   if(reconcilePromise)return reconcilePromise;
   reconcilePromise=(async()=>{
-   const all=[];
-   for(let page=0;page<10;page++){
-    const result=await bot.api.getStarTransactions({offset:page*100,limit:100});
-    all.push(...result.transactions);
-    if(result.transactions.length<100)break;
-    if(page===9)console.warn('Premium reconciliation reached 1000-transaction scan limit');
-   }
-   const summary={restored:0,refunded:0,review:0};
+   const offset=Number(premium.db.prepare("SELECT next_offset FROM premium_sync_state WHERE name='stars'").get()?.next_offset||0);
+   const batch=await readPaymentBatch(bot.api,offset);
+   const all=batch.transactions;
+   const summary={restored:0,refunded:0,review:0,complete:batch.complete,nextOffset:batch.nextOffset};
    all.sort((a,b)=>a.date-b.date);
    for(const tx of all){
     const source=tx.source,receiver=tx.receiver;
@@ -148,6 +145,9 @@ export function installPremium(bot,store,options={}) {
      catch(error){summary.review++;premium.anomaly(receiver.user.id,payment,`refund:${error.message}`);}
     }
    }
+   // Advance only after every fetched record has been applied or retained for review.
+   // On interruption or error, the previous cursor is replayed without double credit.
+   premium.db.prepare("INSERT INTO premium_sync_state(name,next_offset,checked_ms) VALUES('stars',?,?) ON CONFLICT(name) DO UPDATE SET next_offset=excluded.next_offset,checked_ms=excluded.checked_ms").run(batch.nextOffset,Date.now());
    return summary;
   })().finally(()=>{reconcilePromise=null;});
   return reconcilePromise;

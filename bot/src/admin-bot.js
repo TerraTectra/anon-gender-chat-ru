@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { telegramClientOptions } from "./telegram-transport.js";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { adminKeyboard } from "./keyboards.js";
 import { BudgetStore } from "./budget-store.js";
@@ -150,7 +151,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   const quizStore = options.quizDbPath ? new EngagementStore(options.quizDbPath) : null;
   const partyStore = options.partyDbPath ? new EngagementStore(options.partyDbPath) : null;
   const admins = parseAdmins(adminIds);
-  const bot = new Bot(token, { client: { timeoutSeconds: 70 } });
+  const bot = new Bot(token, { client: telegramClientOptions() });
   installTelegramReliability(bot);
   const healthPath = path.resolve(options.healthPath || "./data/health.json");
   const reportStatePath = path.resolve(options.reportStatePath || "./data/admin-report-state.json");

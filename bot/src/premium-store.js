@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS premium_payments(charge_id TEXT PRIMARY KEY,order_id 
 CREATE INDEX IF NOT EXISTS premium_user_idx ON premium_payments(user_id,paid_ms);
 CREATE INDEX IF NOT EXISTS premium_orders_user_created ON premium_orders(user_id,created_ms);
 CREATE TABLE IF NOT EXISTS premium_refunds(charge_id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,refunded_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS premium_sync_state(name TEXT PRIMARY KEY,next_offset INTEGER NOT NULL,checked_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS premium_access(user_id INTEGER PRIMARY KEY,until_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS profile_visibility(user_id INTEGER PRIMARY KEY,visible INTEGER NOT NULL,decided_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS payment_support(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,text TEXT NOT NULL,created_ms INTEGER NOT NULL,resolved_ms INTEGER);

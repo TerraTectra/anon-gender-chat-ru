@@ -19,6 +19,7 @@
   "dependencies": {
     "@grammyjs/runner": "2.0.3",
     "dotenv": "^17.2.3",
-    "grammy": "^1.38.3"
+    "grammy": "^1.38.3",
+    "https-proxy-agent": "9.1.0"
   }
 }

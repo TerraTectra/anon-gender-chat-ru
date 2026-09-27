@@ -136,3 +136,16 @@ test('shutdown during init prevents a late poller from being started',()=>fixtur
   assert.equal(bot.pollingState().running,false);
   assert.equal(sent.some(x=>x.method==='getUpdates'||x.method==='deleteWebhook'),false);
 }));
+
+test('polling metrics record real successful calls and clear consecutive failures on recovery',async()=>{
+ const {apply,bot}=transformer();
+ await assert.rejects(apply(async()=>{const error=new Error('read failed');error.code='ECONNRESET';throw error;},'getUpdates',{timeout:10}));
+ let metrics=bot.telegramMetrics();assert.equal(metrics.polling.errors,1);assert.equal(metrics.polling.consecutive_errors,1);assert.equal(metrics.polling.last_error_code,'ECONNRESET');assert.equal(metrics.polling.last_success_at_ms,null);
+ await apply(async()=>({ok:true,result:[]}),'getUpdates',{timeout:10});
+ metrics=bot.telegramMetrics();assert.equal(metrics.polling.successes,1);assert.equal(metrics.polling.consecutive_errors,0);assert.ok(metrics.polling.last_success_at_ms);
+});
+test('intentional polling cancellation is not reported as a network failure',async()=>{
+ const {apply,bot}=transformer(),controller=new AbortController();controller.abort();
+ await assert.rejects(apply(async()=>{throw new Error('cancelled');},'getUpdates',{timeout:10},controller.signal));
+ assert.equal(bot.telegramMetrics().polling.errors,0);assert.equal(bot.telegramMetrics().errors,0);
+});

@@ -1,11 +1,24 @@
+import { telegramFailureCode } from './telegram-health.js';
 // Bound slow requests without retrying potentially delivered messages.
 export function installTelegramReliability(bot, { onForbidden = () => {}, timeoutMs = 12000 } = {}) {
   const samples = [];
   const stats = { calls: 0, errors: 0, harmless: 0 };
+  const polling = { successes:0, errors:0, consecutive_errors:0, last_success_at_ms:null, last_error_at_ms:null, last_error_code:null };
+  let lastPollWarningAt=0;
+  function pollFailure(error,deadlineExceeded){
+    polling.errors++;
+    polling.consecutive_errors++;
+    polling.last_error_at_ms=Date.now();
+    polling.last_error_code=telegramFailureCode(error,deadlineExceeded);
+    if(Date.now()-lastPollWarningAt>=60_000){
+      console.warn('Telegram polling unavailable', JSON.stringify({at:new Date().toISOString(),code:polling.last_error_code,consecutive:polling.consecutive_errors}));
+      lastPollWarningAt=Date.now();
+    }
+  }
   bot.api.config.use(async (previous, method, payload, signal) => {
     const started = performance.now();
     stats.calls++;
-    const limit = method === 'getUpdates' ? 45000
+    const limit = method === 'getUpdates' ? Math.max(10_000, Math.min(60, Number(payload.timeout)||30)*1000+10_000)
       : method === 'answerPreCheckoutQuery' ? 3000
       : method === 'answerCallbackQuery' ? 2000
       : ['sendPhoto','sendVideo','sendDocument','sendAudio','sendAnimation'].includes(method) ? 60000 : timeoutMs;
@@ -20,6 +33,13 @@ export function installTelegramReliability(bot, { onForbidden = () => {}, timeou
     const abortSignal = controller.signal;
     try {
       const response = await previous(method, payload, abortSignal);
+      if (method === 'getUpdates') {
+        if(response.ok){
+          polling.successes++;
+          polling.last_success_at_ms=Date.now();
+          polling.consecutive_errors=0;
+        }else pollFailure(response,false);
+      }
       if (!response.ok) {
         const description = response.description || '';
         if ((method === 'answerCallbackQuery' && response.error_code === 400 && /query is too old|query ID is invalid/i.test(description)) ||
@@ -40,7 +60,10 @@ export function installTelegramReliability(bot, { onForbidden = () => {}, timeou
       }
       return response;
     } catch (error) {
-      stats.errors++;
+      if (!signal?.aborted) {
+        stats.errors++;
+        if(method==='getUpdates')pollFailure(error,controller.signal.aborted);
+      }
       // Callback acknowledgements are ephemeral. Failure must not cancel the user's action.
       if (method === 'answerCallbackQuery') { stats.harmless++; return { ok: true, result: true }; }
       throw error;
@@ -55,7 +78,7 @@ export function installTelegramReliability(bot, { onForbidden = () => {}, timeou
   });
   bot.telegramMetrics = () => {
     const sorted = [...samples].sort((a,b) => a-b);
-    return { ...stats, samples: sorted.length, p95_ms: sorted.length ? sorted[Math.ceil(sorted.length * .95) - 1] : null };
+    return { ...stats, polling:{...polling}, samples: sorted.length, p95_ms: sorted.length ? sorted[Math.ceil(sorted.length * .95) - 1] : null };
   };
 }
 

@@ -64,3 +64,20 @@ test('reconciliation applies an external refund',()=>fixture(async({store,bot,pu
 
 test('refund reconciliation works without optional invoice payload',()=>fixture(async({store,bot,purchase,setIntercept})=>{const {p}=purchase();setIntercept(method=>method==='getStarTransactions'?{ok:true,result:{transactions:[{id:p.telegram_payment_charge_id,date:Math.floor(Date.now()/1000),amount:-25,receiver:{type:'user',transaction_type:'invoice_payment',user:{id:1}}}]}}:undefined);await bot.reconcilePremium();assert.equal(store.premium.active(1),false);}));
 test('premium user receives only consented demographics in the match notification',()=>fixture(async({store,purchase,send,sent})=>{purchase(1);store.premium.setVisibility(2,true);await send(1,'/search');await send(2,'/search');assert.ok(sent.some(x=>x.chat_id===1&&x.text?.includes('девушка, 25')));assert.ok(!sent.some(x=>x.chat_id===2&&x.text?.includes('Анкета собеседника')));}));
+
+test('reconciliation persists its cursor and restores the 1001st ledger entry',()=>fixture(async({store,bot,order,setIntercept,filename})=>{
+ const {p}=order();store.premium.approve(1,123456,p);
+ const ledger=Array.from({length:1000},(_,n)=>({id:'unrelated-'+n,date:n,amount:1,source:{type:'other'}}));
+ ledger.push({id:p.telegram_payment_charge_id,date:Math.floor(Date.now()/1000),amount:25,source:{type:'user',transaction_type:'invoice_payment',user:{id:1},invoice_payload:p.invoice_payload}});
+ setIntercept((method,payload)=>method==='getStarTransactions'?{ok:true,result:{transactions:ledger.slice(payload.offset,payload.offset+payload.limit)}}:undefined);
+ const first=await bot.reconcilePremium();assert.equal(first.complete,false);assert.equal(first.restored,0);assert.equal(first.nextOffset,1000);
+ const reopened=new Store(filename);try{assert.equal(reopened.db.prepare("SELECT next_offset FROM premium_sync_state WHERE name='stars'").get().next_offset,1000);}finally{reopened.close();}
+ const second=await bot.reconcilePremium();assert.equal(second.complete,true);assert.equal(second.restored,1);assert.equal(store.premium.active(1),true);
+ assert.equal(store.db.prepare("SELECT next_offset FROM premium_sync_state WHERE name='stars'").get().next_offset,0);
+}));
+test('failed reconciliation does not skip ahead of an unprocessed ledger page',()=>fixture(async({store,bot,setIntercept})=>{
+ store.db.prepare("INSERT INTO premium_sync_state VALUES('stars',1000,?)").run(Date.now());
+ setIntercept((method,payload)=>{if(method==='getStarTransactions')throw new Error('temporary failure');});
+ await assert.rejects(bot.reconcilePremium(),/temporary failure/);
+ assert.equal(store.db.prepare("SELECT next_offset FROM premium_sync_state WHERE name='stars'").get().next_offset,1000);
+}));

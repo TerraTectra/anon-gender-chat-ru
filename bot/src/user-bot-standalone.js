@@ -1,4 +1,5 @@
 import "dotenv/config";
+import {closeTelegramTransport} from "./telegram-transport.js";
 import { createUserBot } from "./user-bot.js";
 import { isTelegramPollingConflict, safeErrorSummary } from "./safe-error.js";
 import { acquireSingleInstance, AlreadyRunningError, SINGLE_INSTANCE_EXIT_CODE } from "./single-instance.js";
@@ -35,6 +36,7 @@ const stop = async () => {
   await bot.drainSessionMaintenance();
   await bot.drainArchiveJobs(70_000);
   bot.closeStore();
+  closeTelegramTransport();
   await instanceLock.release();
 };
 process.once("SIGINT", () => void stop());

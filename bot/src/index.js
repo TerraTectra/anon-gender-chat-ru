@@ -16,6 +16,8 @@ import {
 import { createUserBot } from "./user-bot.js";
 import { menuKeyboard } from "./keyboards.js";
 import { installTelegramReliability } from './telegram-reliability.js';
+import { telegramConnectionStatus } from './telegram-health.js';
+import { telegramTransportMode, closeTelegramTransport } from './telegram-transport.js';
 import { isTelegramPollingConflict, safeErrorSummary } from "./safe-error.js";
 import { acquireSingleInstance, AlreadyRunningError, SINGLE_INSTANCE_EXIT_CODE } from "./single-instance.js";
 
@@ -137,6 +139,7 @@ function writeHealth(status = healthStatus, details = {}) {
     bots: botCount,
     pid: process.pid,
     uptime_seconds: Math.round(process.uptime()),
+    anon_transport: telegramTransportMode(),
     anon_polling: userBot.pollingState(),
     anon_api: userBot.telegramMetrics(),
     channels: channelPublisher.status().filter((channel) => channel.enabled).length,
@@ -155,8 +158,9 @@ function writeHealth(status = healthStatus, details = {}) {
   }
 }
 writeHealth("starting");
-const healthTimer = setInterval(() => writeHealth(userBot.pollingState().running ? 'running' : 'starting'), 30_000);
-const readyTimer = setTimeout(() => writeHealth(userBot.pollingState().running ? 'running' : 'starting'), 5_000);
+const connectionStatus = () => telegramConnectionStatus(userBot.pollingState(),userBot.telegramMetrics(),process.uptime());
+const healthTimer = setInterval(() => writeHealth(connectionStatus()), 15_000);
+const readyTimer = setTimeout(() => writeHealth(connectionStatus()), 5_000);
 let shutdownPromise = null;
 
 function safely(callback) {
@@ -196,6 +200,7 @@ function shutdown(status = "stopped", details = {}) {
     safely(() => partyBot?.closeStore?.());
     safely(() => userBot.closeStore());
     safely(() => adminBot.closeStore());
+    closeTelegramTransport();
     await instanceLock.release();
   })();
   return shutdownPromise;
@@ -206,7 +211,11 @@ process.once("SIGTERM", () => void shutdown());
 
 const publicNicheBots = [englishBot, focusBot, gameBot, budgetBot, hubBot, taskBot, quizBot, partyBot].filter(Boolean);
 for (const bot of publicNicheBots) installTelegramReliability(bot);
-await Promise.allSettled(publicNicheBots.map((bot) => bot.syncProfile?.()));
+// Profile refreshes are optional and must not delay anonymous chat/payment polling.
+void Promise.allSettled(publicNicheBots.map((bot) => bot.syncProfile?.())).then(results => {
+  const failed=results.filter(result=>result.status==='rejected').length;
+  if(failed)console.warn('Optional bot profile refresh failed',JSON.stringify({failed}));
+});
 
 console.log(`Starting ${botCount} bots in long-polling mode`);
 const starts = [

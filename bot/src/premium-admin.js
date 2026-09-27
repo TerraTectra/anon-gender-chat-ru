@@ -63,7 +63,7 @@ export function installPremiumAdmin(bot,store,options={}) {
  bot.command('reconcile_payments',async ctx=>{
   if(!await privateOnly(ctx))return;
   if(!options.sourcePaymentReconcile)return ctx.reply('Сверка не подключена.');
-  try{const r=await options.sourcePaymentReconcile();await ctx.reply(`Сверка завершена. Восстановлено: ${r.restored}. Возвратов обработано: ${r.refunded}. На проверку: ${r.review}.`);}
+  try{const r=await options.sourcePaymentReconcile();await ctx.reply(`${r.complete===false?'Часть сверки завершена; следующая часть продолжится автоматически.':'Сверка завершена.'} Восстановлено: ${r.restored}. Возвратов обработано: ${r.refunded}. На проверку: ${r.review}.`);}
   catch(error){await ctx.reply(`Сверка не завершена: ${safeErrorSummary(error)}`);}
  });
 }
