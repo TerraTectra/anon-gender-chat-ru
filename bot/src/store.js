@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { ageGroup, queuesAreCompatible } from "./matching.js";
 import { sourcePerformanceStats } from "./source-performance.js";
 import { ChatSessionArchive } from "./chat-session-archive.js";
+import { PremiumStore } from "./premium-store.js";
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -128,6 +129,7 @@ export class Store {
     this.db = new DatabaseSync(absolute);
     this.db.exec(SCHEMA);
     this.db.exec('PRAGMA busy_timeout = 3000');
+    this.premium = new PremiumStore(this.db);
     if (!this.db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'search_mode')) {
       this.db.exec("ALTER TABLE users ADD COLUMN search_mode TEXT NOT NULL DEFAULT 'random'");
       this.db.exec("UPDATE users SET search_mode = COALESCE((SELECT mode FROM queue WHERE user_id=users.id), 'random')");
@@ -326,6 +328,7 @@ export class Store {
   }
 
   filteredRemaining(id) {
+    if (this.premium.active(id)) return Infinity;
     const row = this.db.prepare(`
       SELECT matches FROM filtered_usage
       WHERE user_id = ? AND usage_date = date('now')
@@ -436,6 +439,7 @@ export class Store {
   }
 
   incrementFiltered(id) {
+    if (this.premium.active(id)) return;
     this.db.prepare(`
       INSERT INTO filtered_usage (user_id, usage_date, matches)
       VALUES (?, date('now'), 1)

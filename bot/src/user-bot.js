@@ -2,6 +2,7 @@ import path from "node:path";
 import { Bot, InlineKeyboard, session } from "grammy";
 import { sequentialize, run } from '@grammyjs/runner';
 import { installTelegramReliability } from './telegram-reliability.js';
+import { installPremium, partnerSummary, premiumDate } from './premium-bot.js';
 import { Store } from "./store.js";
 import { createCatalogHandler } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
@@ -166,6 +167,7 @@ export function createUserBot(token, dbPath, options = {}) {
   const store = options.store ?? new Store(dbPath, { sessionArchiveRoot: options.sessionArchiveRoot });
   const bot = new Bot(token, { client: { timeoutSeconds: 70 } });
   installTelegramReliability(bot, { onForbidden: id => store.markBotBlocked(id) });
+  const { showPremium, showVisibility } = installPremium(bot, store, { adminIds: options.adminIds });
   let runner;
   let pollingStopping = false;
   bot.startConcurrent = async () => {
@@ -174,7 +176,8 @@ export function createUserBot(token, dbPath, options = {}) {
     if (pollingStopping) return;
     await bot.api.deleteWebhook({ drop_pending_updates: false });
     if (pollingStopping) return;
-    runner = run(bot, { sink: { concurrency: 24 }, runner: { fetch: { timeout: 30, allowed_updates: ['message','callback_query','my_chat_member'] }, maxRetryTime: 5 * 60_000, retryInterval: 'exponential' } });
+    runner = run(bot, { sink: { concurrency: 24 }, runner: { fetch: { timeout: 30, allowed_updates: ['message','callback_query','my_chat_member','pre_checkout_query'] }, maxRetryTime: 5 * 60_000, retryInterval: 'exponential' } });
+    bot.startPremiumReconciliation();
     return runner.task();
   };
   bot.stopConcurrent = async () => { pollingStopping = true; if (runner) await runner.stop(); };
@@ -411,7 +414,7 @@ export function createUserBot(token, dbPath, options = {}) {
       return;
     }
     if (mode === 'filtered' && store.filteredRemaining(ctx.from.id) <= 0) {
-      await ctx.reply('Сегодня использованы все 50 фильтрованных совпадений. Текущий чат сохранён. Случайный поиск остаётся без лимита.', { reply_markup: menuKeyboard });
+      await ctx.reply('Сегодня использованы все 50 фильтрованных совпадений. Текущий чат сохранён. Случайный поиск без лимита; премиум: /premium.', { reply_markup: menuKeyboard });
       return;
     }
     if (user.partner_id) {
@@ -423,13 +426,13 @@ export function createUserBot(token, dbPath, options = {}) {
     store.recordEvent(ctx.from.id, "search");
     const result = store.enqueue(ctx.from.id, mode, filter.targetGender, filter.minAge, filter.maxAge);
     if (result.status === "limit") {
-      await ctx.reply("Сегодня использованы все 50 фильтрованных совпадений. Случайный поиск остаётся без лимита.", { reply_markup: menuKeyboard });
+      await ctx.reply("Сегодня использованы все 50 фильтрованных совпадений. Случайный поиск без лимита; премиум: /premium.", { reply_markup: menuKeyboard });
     } else if (result.status === "matched") {
       store.recordEvent(ctx.from.id, "match");
       const message = "Собеседник найден. Можно писать сообщение.";
       const outcomes = await Promise.allSettled([
-        ctx.api.sendMessage(ctx.from.id, message, {reply_markup:menuKeyboard}),
-        ctx.api.sendMessage(result.partnerId, message, {reply_markup:menuKeyboard})
+        ctx.api.sendMessage(ctx.from.id, message + partnerSummary(store, ctx.from.id, result.partnerId), {reply_markup:menuKeyboard}),
+        ctx.api.sendMessage(result.partnerId, message + partnerSummary(store, result.partnerId, ctx.from.id), {reply_markup:menuKeyboard})
       ]);
       const ids = [ctx.from.id, result.partnerId];
       let blocked = false;
@@ -452,6 +455,7 @@ export function createUserBot(token, dbPath, options = {}) {
   }
 
   bot.command("start", async (ctx) => {
+    if (ctx.match === 'premium') return showPremium(ctx);
     const source = parseStartSource(ctx.match, ctx.from.id);
     const user = store.upsertUser(ctx.from.id, ctx.from.username, source);
     store.markUserActive(ctx.from.id);
@@ -462,9 +466,10 @@ export function createUserBot(token, dbPath, options = {}) {
       return;
     }
     await ctx.reply(`Готово. Выберите поиск.\n\n${MEDIA_RETENTION_NOTICE}`, { reply_markup: menuKeyboard });
+    if (store.premium.visibility(ctx.from.id) === null) await showVisibility(ctx);
   });
 
-  bot.command("privacy", (ctx) => ctx.reply(MEDIA_RETENTION_NOTICE, { reply_markup: menuKeyboard }));
+  bot.command("privacy", (ctx) => ctx.reply(`${MEDIA_RETENTION_NOTICE}\n\nПол и возраст скрыты от собеседников по умолчанию. Вы можете разрешить их показ обладателю премиума или скрыть их: /visibility. Платёжные записи хранятся отдельно от архива переписки для доступа, поддержки и возвратов.`, { reply_markup: menuKeyboard }));
 
   bot.callbackQuery(/^profile_gender:(male|female)$/, async (ctx) => {
     if (profileReady(store.getUser(ctx.from.id)) && ctx.session.step !== 'gender') {
@@ -514,7 +519,7 @@ export function createUserBot(token, dbPath, options = {}) {
     const user = store.getUser(ctx.from.id);
     if (!profileReady(user)) return startSearch(ctx, "filtered");
     ctx.session.step = "filter_gender";
-    await ctx.reply(`Кого искать? Осталось фильтрованных совпадений сегодня: ${store.filteredRemaining(ctx.from.id)}.`, { reply_markup: filterGenderKeyboard });
+    await ctx.reply(`Кого искать? Осталось фильтрованных совпадений сегодня: ${store.premium.active(ctx.from.id) ? 'безлимит (премиум)' : store.filteredRemaining(ctx.from.id)}.`, { reply_markup: filterGenderKeyboard });
   });
 
   registerAction(labels.stop, "stop", async (ctx) => {
@@ -565,7 +570,8 @@ export function createUserBot(token, dbPath, options = {}) {
       await ctx.reply("Кто вы?", { reply_markup: genderKeyboard });
       return;
     }
-    await ctx.reply(`Ваш профиль: ${displayGender(user.gender)}, ${user.age}.\nФильтрованных совпадений сегодня осталось: ${store.filteredRemaining(ctx.from.id)}.\n\nЧтобы изменить профиль, отправьте /reset.`, { reply_markup: menuKeyboard });
+    const premiumStatus = store.premium.active(ctx.from.id) ? `Премиум до ${premiumDate(store.premium.until(ctx.from.id))}.` : 'Премиум не подключён: /premium.';
+    await ctx.reply(`Ваш профиль: ${displayGender(user.gender)}, ${user.age}.\nФильтрованных совпадений сегодня осталось: ${store.premium.active(ctx.from.id) ? 'безлимит (премиум)' : store.filteredRemaining(ctx.from.id)}.\n\n${premiumStatus}\nВидимость пола и возраста: /visibility.\nЧтобы изменить профиль, отправьте /reset.`, { reply_markup: menuKeyboard });
   });
 
   async function showStats(ctx) {
@@ -616,6 +622,7 @@ export function createUserBot(token, dbPath, options = {}) {
       store.setProfile(ctx.from.id, { age, state: "idle" });
       ctx.session.step = null;
       await ctx.reply("Профиль готов. Выберите поиск.", { reply_markup: menuKeyboard });
+      await showVisibility(ctx);
       return;
     }
     if (ctx.session.step === "filter_age") {

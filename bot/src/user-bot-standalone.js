@@ -18,7 +18,8 @@ try {
 }
 
 const bot = createUserBot(token, process.env.DB_PATH || "./data/chat.db", {
-  sessionArchiveRoot: process.env.SESSION_ARCHIVE_ROOT || undefined
+  sessionArchiveRoot: process.env.SESSION_ARCHIVE_ROOT || undefined,
+  adminIds: process.env.ADMIN_IDS
 });
 let stopping = false;
 const stop = async () => {
@@ -30,6 +31,7 @@ const stop = async () => {
   } catch {
     // Startup may have failed before polling began.
   }
+  await bot.stopPremium();
   await bot.drainSessionMaintenance();
   await bot.drainArchiveJobs(70_000);
   bot.closeStore();

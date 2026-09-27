@@ -55,7 +55,7 @@ const taskDbPath = process.env.TASK_DB_PATH || "./data/tasks.db";
 const quizDbPath = process.env.QUIZ_DB_PATH || "./data/quiz.db";
 const partyDbPath = process.env.PARTY_DB_PATH || "./data/party.db";
 const sessionArchiveRoot = process.env.SESSION_ARCHIVE_ROOT || undefined;
-const userBot = createUserBot(token, dbPath, { sessionArchiveRoot });
+const userBot = createUserBot(token, dbPath, { sessionArchiveRoot, adminIds: process.env.ADMIN_IDS });
 const partyBot = partyToken ? createJoinGuardBot(partyToken, partyDbPath) : null;
 let channelPublisher = null;
 const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
@@ -93,9 +93,13 @@ const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
     if (message.kind === "animation") return userBot.api.sendAnimation(chatId, message.file_id, common);
     return null;
   },
+  sourcePaymentRefund: (userId, chargeId) => userBot.api.refundStarPayment(userId, chargeId),
+  sourcePaymentMessage: (userId, text) => userBot.api.sendMessage(userId, text),
+  sourcePaymentReconcile: () => userBot.reconcilePremium(),
   sourceSessionNotifier: (userId, text) => userBot.api.sendMessage(userId, text, { reply_markup: menuKeyboard }),
   channelStatusProvider: () => channelPublisher?.status() || []
 });
+userBot.paymentAdminNotifier = (adminId, text) => adminBot.api.sendMessage(adminId, text);
 channelPublisher = new ChannelPublisher(
   () => adminBot.api,
   process.env.CHANNELS_CONFIG_PATH || "./content/channels.json",
@@ -171,6 +175,7 @@ function shutdown(status = "stopped", details = {}) {
     writeHealth(status, details);
     safely(() => userBot.stopSessionRetention());
     await userBot.stopConcurrent();
+    await userBot.stopPremium();
     safely(() => adminBot.stopDailyReportScheduler());
     safely(() => channelPublisher.stop());
     await Promise.allSettled([adminBot, englishBot, focusBot, gameBot, budgetBot, hubBot, taskBot, quizBot, partyBot]

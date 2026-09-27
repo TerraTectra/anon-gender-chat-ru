@@ -8,6 +8,8 @@ export const labels = {
   stop: "⛔ Завершить",
   report: "🚩 Пожаловаться",
   profile: "👤 Профиль",
+  premium: "⭐ Премиум",
+  partner: "👀 Собеседник",
   stats: "📊 Статистика",
   invite: "🎁 Пригласить",
   catalog: catalogLabel
@@ -25,6 +27,9 @@ export const menuKeyboard = new Keyboard()
   .row()
   .text(labels.stats)
   .text(labels.invite)
+  .row()
+  .text(labels.premium)
+  .text(labels.partner)
   .row()
   .text(labels.catalog)
   .resized();

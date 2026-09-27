@@ -28,7 +28,9 @@ Baseline: 102 automated tests passed. Added regression tests cover search mode, 
 
 The initial live restart retained the active pair and all registrations; no asymmetric or mixed minor/adult pairs were found. No real purchase or refund was performed.
 
-## Premium and payments — NOT deployed
+## Premium and payments — initial checkpoint, superseded
+
+**After the user's explicit approval, premium was implemented and deployed. See PREMIUM.md for the final release state. The following paragraph records only the earlier blocked attempt.**
 
 The user's requested premium is not active. Two attempts to write its payment module were blocked by the tool safety check. No payment module, invoice handler or premium entitlement was installed; no payment was collected. The live verification explicitly checks premiumModulePresent=false.
 

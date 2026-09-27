@@ -43,7 +43,12 @@ if (userToken) {
     { command: "next", description: "Следующий собеседник" },
     { command: "stop", description: "Завершить чат или поиск" },
     { command: "invite", description: "Позвать друга" },
-    { command: "privacy", description: "Как хранится переписка" }
+    { command: "privacy", description: "Как хранится переписка" },
+    { command: "premium", description: "Премиум и тарифы" },
+    { command: "partner", description: "Анкета текущего собеседника" },
+    { command: "visibility", description: "Видимость пола и возраста" },
+    { command: "terms", description: "Условия покупки премиума" },
+    { command: "paysupport", description: "Помощь с оплатой и возвратами" }
   ];
   await telegram(userToken, "setMyCommands", { commands });
   const savedCommands = await telegram(userToken, "getMyCommands", {});
