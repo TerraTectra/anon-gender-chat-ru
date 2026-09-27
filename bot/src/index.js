@@ -95,6 +95,8 @@ const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
     if (message.kind === "animation") return userBot.api.sendAnimation(chatId, message.file_id, common);
     return null;
   },
+  sourcePaymentBalance: () => userBot.api.getMyStarBalance(),
+  sourcePaymentBotId: () => userBot.botInfo.id,
   sourcePaymentRefund: (userId, chargeId) => userBot.api.refundStarPayment(userId, chargeId),
   sourcePaymentMessage: (userId, text) => userBot.api.sendMessage(userId, text),
   sourcePaymentReconcile: () => userBot.reconcilePremium(),

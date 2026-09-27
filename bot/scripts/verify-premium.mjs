@@ -23,7 +23,7 @@ try{
   await read(()=>bot.api.setMyCommands(commands));
   const saved=await read(()=>bot.api.getMyCommands());result.userCommandsVerified=userAdditions.every(a=>saved.some(c=>c.command===a.command));
   const admin=new Bot(process.env.ADMIN_BOT_TOKEN,{client:telegramClientOptions()});installTelegramReliability(admin);
-  const additions=[{command:'payments',description:'Премиум и платежи'},{command:'payment_support',description:'Обращения по оплате'},{command:'payreply',description:'Ответить по обращению'},{command:'payclose',description:'Закрыть обращение'},{command:'refund',description:'Возврат с подтверждением'},{command:'reconcile_payments',description:'Сверка платежей с Telegram'}];
+  const additions=[{command:'payments',description:'Платежи, баланс и возвраты'},{command:'balance',description:'Баланс Stars основного бота'},{command:'payment_support',description:'Обращения по оплате'},{command:'payreply',description:'Ответить по обращению'},{command:'payclose',description:'Закрыть обращение'},{command:'refund',description:'Возврат с подтверждением'},{command:'reconcile_payments',description:'Сверка платежей с Telegram'}];
   const previous=await read(()=>admin.api.getMyCommands());
   await read(()=>admin.api.setMyCommands([...previous.filter(c=>!additions.some(a=>a.command===c.command)),...additions]));
   const savedAdmin=await read(()=>admin.api.getMyCommands());result.adminCommandsVerified=additions.every(a=>savedAdmin.some(c=>c.command===a.command));

@@ -185,6 +185,8 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     .text("TerraTectra Hub", "admin_product:hub");
 
   const anonProductKeyboard = new InlineKeyboard()
+    .text("💳 Платежи и баланс", "payments:home")
+    .row()
     .text("💬 Активные сессии", "anon_sessions:0")
     .row()
     .text("🗂 Архив за 7 дней", "anon_retained:0")

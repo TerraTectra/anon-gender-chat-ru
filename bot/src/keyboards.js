@@ -49,6 +49,8 @@ export const confirmReportKeyboard = new InlineKeyboard()
   .text("Отмена", "report:cancel");
 
 export const adminKeyboard = new Keyboard()
+  .text("💳 Платежи")
+  .row()
   .text("🏠 Обзор")
   .text("🤖 Боты")
   .row()
