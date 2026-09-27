@@ -4,6 +4,7 @@ import { Bot, InlineKeyboard, session } from "grammy";
 import { sequentialize, run } from '@grammyjs/runner';
 import { installTelegramReliability } from './telegram-reliability.js';
 import { installPremium, partnerSummary, premiumDate } from './premium-bot.js';
+import { installTestPayment } from './test-payment.js';
 import { Store } from "./store.js";
 import { createCatalogHandler } from "./catalog.js";
 import { parseStartSource } from "./tracking.js";
@@ -168,6 +169,7 @@ export function createUserBot(token, dbPath, options = {}) {
   const store = options.store ?? new Store(dbPath, { sessionArchiveRoot: options.sessionArchiveRoot });
   const bot = new Bot(token, { client: telegramClientOptions() });
   installTelegramReliability(bot, { onForbidden: id => store.markBotBlocked(id) });
+  installTestPayment(bot, store, { adminIds: options.adminIds });
   const { showPremium, showVisibility } = installPremium(bot, store, { adminIds: options.adminIds });
   let runner;
   let pollingStopping = false;

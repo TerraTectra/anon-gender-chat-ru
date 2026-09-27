@@ -31,6 +31,7 @@ export function installPremium(bot,store,options={}) {
   const keyboard=new InlineKeyboard();
   for(const [key,plan] of Object.entries(PLANS))keyboard.text(`${plan.label} · ${plan.stars} ⭐`,`premium:plan:${key}`).row();
   keyboard.text('Условия','premium:terms');
+  if (bot.testPaymentAvailable?.(ctx.from.id)) keyboard.row().text('Тестовая оплата — 8 ⭐','testpay:create');
   await ctx.reply(`⭐ Премиум\n${status}\n\nБезлимитный поиск по полу и возрасту. Просмотр пола и возраста собеседника, если он разрешил показ: /partner.\n\nБез автосписаний. Бесплатный случайный поиск и 50 совпадений с фильтрами в сутки остаются. Количество подходящих людей премиум не увеличивает.\n\nВыберите срок:`,{reply_markup:keyboard});
  }
  async function showVisibility(ctx){
@@ -131,6 +132,7 @@ export function installPremium(bot,store,options={}) {
    const summary={restored:0,refunded:0,review:0,complete:batch.complete,nextOffset:batch.nextOffset};
    all.sort((a,b)=>a.date-b.date);
    for(const tx of all){
+    if (await bot.reconcileTestTransaction?.(tx)) continue;
     const source=tx.source,receiver=tx.receiver;
     if(source?.type==='user'&&source.transaction_type==='invoice_payment'&&source.invoice_payload?.startsWith('premium:v1:')){
      const payment={currency:'XTR',total_amount:tx.amount,invoice_payload:source.invoice_payload,telegram_payment_charge_id:tx.id};
