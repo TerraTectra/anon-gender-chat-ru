@@ -35,9 +35,9 @@
 
 ## Проверка выпуска
 
-170 автоматических тестов прошли, ошибок нет. 39 из них проверяют премиум и админку, включая права доступа, согласие, валюту/сумму, повторные платежи, продление, возвраты, сохранность после открытия базы заново, приватность анкет и независимость checkout от зависшей переписки.
+177 автоматических тестов прошли, ошибок нет. Набор включает премиум, платёжную админку, права доступа, согласие, валюту/сумму, повторные платежи, продление, возвраты, сохранность после открытия базы заново, приватность анкет и независимость checkout от зависшей переписки.
 
-Telegram в рабочей среде принял диагностический счёт в Stars через createInvoiceLink. Команды основного и административного ботов обновлены через setMyCommands и перечитаны для проверки. Диагностические ссылки не предназначены для оплаты; их payload не пройдёт checkout. Реальная покупка и реальный возврат в ходе тестов НЕ выполнялись.
+Telegram в рабочей среде принял диагностический счёт в Stars через createInvoiceLink. Команды основного и административного ботов обновлены через setMyCommands и перечитаны для проверки. Диагностические ссылки не предназначены для оплаты; их payload не пройдёт checkout. Позднее отдельная временная тестовая оплата на 8 Stars была реально оплачена владельцем и реально возвращена через Telegram; баланс принимающего бота после возврата снова стал 0. Реальную покупку премиум-тарифа в этой проверке не выполняли.
 
 После перезапуска production-процесс 24888 запустил polling. SQLite quick_check: ok. Существующая активная пара и регистрации сохранены, асимметричных пар не обнаружено. Предрелизная копия баз: bot/data/backups/*_2026-09-27_19-17-33.db. Дополнительный исходный снимок и архив сессий: D:/Projects/TerraTectra-production/backups/anon-premium-2026-09-27T18-44-57.803Z.
 
@@ -64,3 +64,7 @@ Telegram в рабочей среде принял диагностически�
 27.09.2026 в 19:42 UTC production-процесс 37684 работал через local_proxy: четыре завершённых запроса получения обновлений, ноль ошибок, status=running. Проверочный createInvoiceLink в Stars принят Telegram уже по этому маршруту; покупок и возвратов не выполнялось. SQLite quick_check: ok, асимметричных пар нет. Короткое контрольное окно не является гарантией постоянной доступности; health продолжает учитывать фактические успешные запросы.
 
 Перед последним перезапуском сохранены резервные копии баз с отметкой 2026-09-27_19-41-12. Приватный .env не включается в Git. Откат только сетевой настройки: очистить TELEGRAM_PROXY_URL в локальном .env и перезапустить штатный runner, не запуская второй polling-процесс.
+
+## Temporary 8-Star test retired — 28.09.2026
+
+The one-off owner test completed end-to-end: Telegram confirmed the incoming 8 Stars and the subsequent refund, and the receiving bot balance returned to 0. Creation was disabled before removal. The temporary /testpay command, premium-menu test button, test checkout handlers, test-specific reconciliation and test-specific administrator refund UI were then removed from production. Historical test_payment_* rows remain only as audit evidence in the production SQLite database and are not shown in the permanent payment UI. Permanent premium purchases, live Stars balance, payment support, reconciliation and premium refunds remain enabled.
