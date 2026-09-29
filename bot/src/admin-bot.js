@@ -81,11 +81,13 @@ export function chatSessionText(session, now = Date.now()) {
   const until = active ? now : session.ended_at_ms;
   const status = active ? "активна" : "завершена";
   const recovered = session.legacy_backfill ? "\nНачало восстановлено после перезапуска и может быть неточным." : "";
-  const expiry = session.expires_at_ms ? `\nУдаление архива: ${moscowDateTime(session.expires_at_ms)} МСК` : "";
+  const retention = Number(session.is_favorite)
+    ? "\nХранение архива: ⭐ без срока (избранное)"
+    : session.expires_at_ms ? `\nУдаление архива: ${moscowDateTime(session.expires_at_ms)} МСК` : "";
   const unavailable = Number(session.unavailable_count || 0)
     ? `\nНедоступно локально: ${session.unavailable_count}`
     : "";
-  return `Сессия #${session.id}\nСтатус: ${status}\nУчастники:\n1. ${participantText(session.participants[0])}\n2. ${participantText(session.participants[1])}\n\nНачало: ${moscowDateTime(session.started_at_ms)} МСК\nПоследняя активность: ${moscowDateTime(session.last_activity_at_ms)} МСК\nДлительность: ${elapsedText(Number(until) - Number(session.started_at_ms))}\n\nСообщений: ${session.message_count || 0}\nВложений в переписке: ${session.attachment_count || 0}\nRetention-медиа: ${session.media_count}\nФото: ${session.photo_count} · видео: ${session.video_count} · кружки: ${session.video_note_count}\nСохранено retention-файлов локально: ${session.stored_count}${unavailable}${expiry}${recovered}`;
+  return `Сессия #${session.id}\nСтатус: ${status}\nУчастники:\n1. ${participantText(session.participants[0])}\n2. ${participantText(session.participants[1])}\n\nНачало: ${moscowDateTime(session.started_at_ms)} МСК\nПоследняя активность: ${moscowDateTime(session.last_activity_at_ms)} МСК\nДлительность: ${elapsedText(Number(until) - Number(session.started_at_ms))}\n\nСообщений: ${session.message_count || 0}\nВложений в переписке: ${session.attachment_count || 0}\nRetention-медиа: ${session.media_count}\nФото: ${session.photo_count} · видео: ${session.video_count} · кружки: ${session.video_note_count}\nСохранено retention-файлов локально: ${session.stored_count}${unavailable}${retention}${recovered}`;
 }
 
 export function aggregateSourceStats(products, limit = 15) {
@@ -189,7 +191,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     .row()
     .text("💬 Активные сессии", "anon_sessions:0")
     .row()
-    .text("🗂 Архив за 7 дней", "anon_retained:0")
+    .text("🗂 Архив + избранное", "anon_retained:0")
     .row()
     .text("← Все боты", "admin_products");
 
@@ -218,7 +220,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     if (product === "anon") {
       const activeSessions = store.listActiveChatSessions({ limit: 1 }).total;
       const retainedSessions = store.listRetainedChatSessions({ limit: 1 }).total;
-      return `Анонимный чат\n\n${statsText(store.stats())}\nСессий в журнале: ${activeSessions}\nАрхивных сессий за 7 дней: ${retainedSessions}\n\n${pairGrowthText("За 7 дней", store.growthStats())}`;
+      return `Анонимный чат\n\n${statsText(store.stats())}\nСессий в журнале: ${activeSessions}\nАрхивных сессий за 7 дней + избранных: ${retainedSessions}\n\n${pairGrowthText("За 7 дней", store.growthStats())}`;
     }
     if (product === "english" && englishStore) return `English Talk Match\n\n${statsText(englishStore.stats())}\n\n${pairGrowthText("За 7 дней", englishStore.growthStats())}`;
     if (product === "game" && gameStore) return `Game Mate\n\n${statsText(gameStore.stats())}\n\n${pairGrowthText("За 7 дней", gameStore.growthStats())}`;
@@ -504,7 +506,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     for (const session of result.items) {
       const messages = Number(session.message_count || 0);
       const media = Number(session.media_count || 0);
-      const marker = session.status === "active" ? "🟢" : "🗂";
+      const marker = Number(session.is_favorite) ? "⭐" : session.status === "active" ? "🟢" : "🗂";
       keyboard.text(`${marker} #${session.id} · ${messages} сообщ. · ${media} retention`, `anon_session:${session.id}:${kind}:${page}`).row();
     }
     if (page > 0) keyboard.text("← Назад", `${kind === "a" ? "anon_sessions" : "anon_retained"}:${page - 1}`);
@@ -528,11 +530,12 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     const result = kind === "a"
       ? store.listActiveChatSessions(options)
       : store.listRetainedChatSessions(options);
-    const title = kind === "a" ? "Активные сессии анонимного чата" : "Архив: активные и завершённые сессии за 7 дней";
+    const title = kind === "a" ? "Активные сессии анонимного чата" : "Архив: последние 7 дней + избранные без срока";
     const lines = result.items.map((session, index) => {
       const number = page * SESSION_PAGE_SIZE + index + 1;
       const time = session.status === "active" ? session.last_activity_at_ms : session.ended_at_ms;
-      return `${number}. #${session.id} · ${session.status === "active" ? "активна" : "завершена"} · ${session.message_count || 0} сообщ. · ${session.media_count} retention\n${moscowDateTime(time)} МСК`;
+      const favorite = Number(session.is_favorite) ? " · ⭐ избранное" : "";
+      return `${number}. #${session.id} · ${session.status === "active" ? "активна" : "завершена"}${favorite} · ${session.message_count || 0} сообщ. · ${session.media_count} retention\n${moscowDateTime(time)} МСК`;
     });
     const text = `${title}\nВсего: ${result.total}\n\n${lines.length ? lines.join("\n\n") : "Сессий нет."}`;
     const replyMarkup = sessionListKeyboard(result, kind, page);
@@ -544,6 +547,12 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     const keyboard = new InlineKeyboard();
     if (Number(session.message_count) > 0) keyboard.text("💬 Открыть переписку", `anon_message:${session.id}:0`).row();
     if (Number(session.media_count) > 0) keyboard.text("📎 Retention-вложения", `anon_attachment:${session.id}:0`).row();
+    if (Number(session.media_count) > 0) {
+      keyboard.text(
+        Number(session.is_favorite) ? "☆ Убрать из избранного" : "⭐ В избранное",
+        `anon_favorite:${session.id}:${Number(session.is_favorite) ? 0 : 1}:${listKind}:${page}`
+      ).row();
+    }
     keyboard.text("🗑 Удалить сессию", `anon_delete:${session.id}:${listKind}:${page}`).row();
     keyboard.text("← К списку", `${listKind === "a" ? "anon_sessions" : "anon_retained"}:${page}`);
     return keyboard;
@@ -733,6 +742,23 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(chatSessionText(session), {
       reply_markup: sessionDetailKeyboard(session, ctx.match[2], Number(ctx.match[3]))
+    });
+  });
+  bot.callbackQuery(/^anon_favorite:(\d+):(0|1):(a|m):(\d+)$/, async (ctx) => {
+    if (!requirePrivateSessionArchive(ctx)) {
+      await ctx.answerCallbackQuery({ text: "Архив доступен только в личном чате.", show_alert: true });
+      return;
+    }
+    const sessionId = Number(ctx.match[1]);
+    const favorite = ctx.match[2] === "1";
+    const session = store.setChatSessionFavorite(sessionId, favorite);
+    if (!session) {
+      await ctx.answerCallbackQuery({ text: "Сессия уже удалена или не подлежит архивированию.", show_alert: true });
+      return;
+    }
+    await ctx.answerCallbackQuery(favorite ? "Добавлено в избранное" : "Убрано из избранного");
+    await ctx.editMessageText(chatSessionText(session), {
+      reply_markup: sessionDetailKeyboard(session, ctx.match[3], Number(ctx.match[4]))
     });
   });
   bot.callbackQuery(/^anon_message:(\d+):(\d+)$/, (ctx) => sendSessionMessage(ctx, Number(ctx.match[1]), Number(ctx.match[2])));

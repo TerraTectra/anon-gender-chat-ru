@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   media_count INTEGER NOT NULL DEFAULT 0 CHECK (media_count >= 0),
   qualified_at_ms INTEGER,
   expires_at_ms INTEGER,
+  is_favorite INTEGER NOT NULL DEFAULT 0 CHECK (is_favorite IN (0, 1)),
   legacy_backfill INTEGER NOT NULL DEFAULT 0 CHECK (legacy_backfill IN (0, 1)),
   CHECK (user_a_id < user_b_id)
 );
@@ -121,6 +122,10 @@ export class ChatSessionArchive {
     fs.mkdirSync(this.filesDirectory, { recursive: true });
     this.db = new DatabaseSync(path.join(this.rootDirectory, "sessions.sqlite"));
     this.db.exec(SCHEMA);
+    const sessionColumns = this.db.prepare("PRAGMA table_info(chat_sessions)").all();
+    if (!sessionColumns.some((column) => column.name === "is_favorite")) {
+      this.db.exec("ALTER TABLE chat_sessions ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0 CHECK (is_favorite IN (0, 1))");
+    }
     this.closed = false;
   }
 
@@ -554,7 +559,7 @@ export class ChatSessionArchive {
   listRetained({ limit = 10, offset = 0, now = Date.now() } = {}) {
     const safeLimit = boundedPageValue(limit, 10, 1, 50);
     const safeOffset = boundedPageValue(offset, 0, 0, 1_000_000);
-    const visible = "s.media_count > ? AND (s.status = 'active' OR s.expires_at_ms > ?)";
+    const visible = "s.media_count > ? AND (s.status = 'active' OR s.is_favorite = 1 OR s.expires_at_ms > ?)";
     const total = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM chat_sessions s WHERE ${visible}`)
       .get(MEDIA_RETENTION_THRESHOLD, now).count);
     const items = this.db.prepare(`${this.#sessionSelect(visible)}
@@ -567,8 +572,21 @@ export class ChatSessionArchive {
 
   getSession(sessionId, now = Date.now()) {
     return this.db.prepare(`${this.#sessionSelect(`
-      s.id = ? AND (s.status = 'active' OR (s.media_count > ? AND s.expires_at_ms > ?))
+      s.id = ? AND (s.status = 'active' OR s.is_favorite = 1 OR (s.media_count > ? AND s.expires_at_ms > ?))
     `)}`).get(sessionId, MEDIA_RETENTION_THRESHOLD, now) || null;
+  }
+
+  setFavorite(sessionId, favorite = true) {
+    const id = Number(sessionId);
+    if (!Number.isSafeInteger(id)) return null;
+    const value = favorite ? 1 : 0;
+    const result = this.db.prepare(`
+      UPDATE chat_sessions
+      SET is_favorite = ?
+      WHERE id = ? AND media_count > ?
+    `).run(value, id, MEDIA_RETENTION_THRESHOLD);
+    if (Number(result.changes) === 0) return null;
+    return this.db.prepare("SELECT * FROM chat_sessions WHERE id = ?").get(id) || null;
   }
 
   listMedia(sessionId, { limit = 1, offset = 0, now = Date.now() } = {}) {
@@ -602,7 +620,7 @@ export class ChatSessionArchive {
       SELECT msg.* FROM chat_session_messages msg
       JOIN chat_sessions s ON s.id = msg.session_id
       WHERE msg.id = ?
-        AND (s.status = 'active' OR (s.media_count > ? AND s.expires_at_ms > ?))
+        AND (s.status = 'active' OR s.is_favorite = 1 OR (s.media_count > ? AND s.expires_at_ms > ?))
     `).get(messageId, MEDIA_RETENTION_THRESHOLD, now);
     if (!message) return null;
     if (message.media_id) {
@@ -622,7 +640,7 @@ export class ChatSessionArchive {
       SELECT m.* FROM chat_session_media m
       JOIN chat_sessions s ON s.id = m.session_id
       WHERE m.id = ?
-        AND (s.status = 'active' OR (s.media_count > ? AND s.expires_at_ms > ?))
+        AND (s.status = 'active' OR s.is_favorite = 1 OR (s.media_count > ? AND s.expires_at_ms > ?))
     `).get(mediaId, MEDIA_RETENTION_THRESHOLD, now);
     if (!media) return null;
     if (!media.local_path || media.storage_status !== "stored") return { ...media, absolutePath: null };
@@ -636,7 +654,7 @@ export class ChatSessionArchive {
   purgeExpired(now = Date.now()) {
     const expired = this.db.prepare(`
       SELECT id FROM chat_sessions
-      WHERE status = 'ended' AND expires_at_ms IS NOT NULL AND expires_at_ms <= ?
+      WHERE status = 'ended' AND is_favorite = 0 AND expires_at_ms IS NOT NULL AND expires_at_ms <= ?
     `).all(now);
     if (!expired.length) return { sessions: 0, files: 0 };
     const paths = [...new Set(expired.flatMap((row) => this.#allFilePaths(row.id)))];

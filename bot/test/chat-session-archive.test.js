@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MEDIA_RETENTION_MS } from "../src/chat-session-archive.js";
+import { ChatSessionArchive, MEDIA_RETENTION_MS } from "../src/chat-session-archive.js";
 import { Store } from "../src/store.js";
 import { archivedMessageFromMessage, retainedMediaFromMessage } from "../src/user-bot.js";
 
@@ -102,6 +103,75 @@ test("the sixth mixed media item retains the ended session for exactly seven day
     assert.equal(fs.readdirSync(path.join(fixture.archiveRoot, "files")).length, 0);
   } finally {
     fixture.cleanup();
+  }
+});
+
+test("favorite archived sessions survive expiry until explicitly unfavorited", () => {
+  const fixture = createFixture();
+  try {
+    addMedia(fixture.store, 1);
+    const sessionId = fixture.store.listActiveChatSessions().items[0].id;
+    const endedAt = 30_000;
+    fixture.store.disconnect(1, "stop", endedAt);
+    const favorite = fixture.store.setChatSessionFavorite(sessionId, true);
+    assert.equal(favorite.is_favorite, 1);
+
+    const expiredAt = endedAt + MEDIA_RETENTION_MS;
+    assert.deepEqual(fixture.store.purgeExpiredChatSessions(expiredAt), { sessions: 0, files: 0 });
+    const retained = fixture.store.listRetainedChatSessions({ now: expiredAt + 1 });
+    assert.equal(retained.total, 1);
+    assert.equal(retained.items[0].id, sessionId);
+    assert.equal(retained.items[0].is_favorite, 1);
+    assert.equal(fs.readdirSync(path.join(fixture.archiveRoot, "files")).length, 1);
+
+    const unfavorite = fixture.store.setChatSessionFavorite(sessionId, false);
+    assert.equal(unfavorite.is_favorite, 0);
+    assert.deepEqual(fixture.store.purgeExpiredChatSessions(expiredAt + 1), { sessions: 1, files: 1 });
+    assert.equal(fixture.store.listRetainedChatSessions({ now: expiredAt + 1 }).total, 0);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("existing archive databases are migrated with the favorite flag", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "anon-session-migration-"));
+  const archiveRoot = path.join(directory, "retention");
+  fs.mkdirSync(archiveRoot, { recursive: true });
+  const dbPath = path.join(archiveRoot, "sessions.sqlite");
+  const legacy = new DatabaseSync(dbPath);
+  try {
+    legacy.exec(`
+      CREATE TABLE chat_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_a_id INTEGER NOT NULL,
+        user_b_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        started_at_ms INTEGER NOT NULL,
+        last_activity_at_ms INTEGER NOT NULL,
+        ended_at_ms INTEGER,
+        end_reason TEXT,
+        media_count INTEGER NOT NULL DEFAULT 0,
+        qualified_at_ms INTEGER,
+        expires_at_ms INTEGER,
+        legacy_backfill INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+  } finally {
+    legacy.close();
+  }
+
+  const archive = new ChatSessionArchive(archiveRoot);
+  archive.close();
+
+  const migrated = new DatabaseSync(dbPath);
+  try {
+    assert.equal(
+      migrated.prepare("PRAGMA table_info(chat_sessions)").all().some((column) => column.name === "is_favorite"),
+      true
+    );
+  } finally {
+    migrated.close();
+    fs.rmSync(directory, { recursive: true, force: true });
   }
 });
 

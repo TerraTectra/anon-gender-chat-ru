@@ -192,6 +192,10 @@ export class Store {
     return this.#withParticipants(this.sessionArchive.getSession(sessionId, now));
   }
 
+  setChatSessionFavorite(sessionId, favorite = true) {
+    return this.#withParticipants(this.sessionArchive.setFavorite(sessionId, favorite));
+  }
+
   listChatSessionMedia(sessionId, options = {}) {
     return this.sessionArchive.listMedia(sessionId, options);
   }
