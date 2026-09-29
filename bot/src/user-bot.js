@@ -20,7 +20,7 @@ import {
 const profileReady = (user) => Boolean(user?.gender && user?.age);
 const displayGender = (value) => value === "male" ? "парень" : "девушка";
 const TELEGRAM_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024;
-const MEDIA_RETENTION_NOTICE = "Для модерации переписка и вложения записываются во время активного чата. Если фото, видео и кружков не было, запись удаляется сразу после завершения. Если были — переписка и вложения хранятся в защищённом архиве до 7 суток.";
+const MEDIA_RETENTION_NOTICE = "Для модерации переписка и вложения записываются во время активного чата. Если фото, видео и кружков не было, запись удаляется сразу после завершения. Если были — переписка и вложения обычно хранятся в защищённом архиве до 7 суток. Отдельная сессия может быть сохранена администратором дольше для модерации или разбора жалобы и удаляется вручную после завершения работы с ней.";
 
 export function isBotBlockedByUserError(error) {
   const code = Number(error?.error_code ?? error?.error?.error_code ?? error?.response?.error_code ?? 0);
