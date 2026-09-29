@@ -1,0 +1,60 @@
+name: Notify IndexNow
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "*.html"
+      - "sitemap.xml"
+      - "robots.txt"
+      - "feed.xml"
+      - "b9f6d6d8d3b149e4a7bc9f44c0b25a63.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build IndexNow payload
+        run: |
+          python - <<'PY'
+          import json
+          import xml.etree.ElementTree as ET
+
+          key = "b9f6d6d8d3b149e4a7bc9f44c0b25a63"
+          base = "https://terratectra.github.io/anon-gender-chat-ru/"
+          tree = ET.parse("sitemap.xml")
+          ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+          urls = [
+              node.text.strip()
+              for node in tree.findall("sm:url/sm:loc", ns)
+              if node.text and node.text.strip()
+          ]
+          payload = {
+              "host": "terratectra.github.io",
+              "key": key,
+              "keyLocation": f"{base}{key}.txt",
+              "urlList": urls,
+          }
+          with open("indexnow-payload.json", "w", encoding="utf-8") as fh:
+              json.dump(payload, fh, ensure_ascii=False)
+          print(f"Prepared {len(urls)} URLs")
+          PY
+
+      - name: Submit URLs to IndexNow
+        run: |
+          code="$(curl -sS -o indexnow-response.txt -w "%{http_code}" \
+            -X POST "https://api.indexnow.org/indexnow" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data-binary @indexnow-payload.json)"
+          echo "IndexNow HTTP $code"
+          if [ "$code" != "200" ] && [ "$code" != "202" ]; then
+            cat indexnow-response.txt || true
+            exit 1
+          fi
