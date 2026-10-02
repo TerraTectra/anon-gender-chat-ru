@@ -76,6 +76,66 @@ function clippedText(value, limit = 3200) {
   return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
 }
 
+const TRANSCRIPT_BATCH_SIZE = 50;
+const TRANSCRIPT_CHUNK_LIMIT = 3600;
+
+export function readFullSessionTranscript(store, sessionId) {
+  const messages = [];
+  let offset = 0;
+  let total = 0;
+
+  do {
+    const result = store.listChatSessionMessages(sessionId, {
+      limit: TRANSCRIPT_BATCH_SIZE,
+      offset
+    });
+    total = Number(result.total || 0);
+    if (!result.items.length) break;
+    messages.push(...result.items);
+    offset += result.items.length;
+  } while (offset < total);
+
+  return { items: messages, total };
+}
+
+export function buildSessionTranscriptChunks(sessionId, messages) {
+  if (!messages.length) return [];
+  const entries = messages.map((message, index) => {
+    const payload = message.text || message.caption || (message.kind === "sticker" ? message.sticker_emoji : "") || "";
+    const fileName = message.file_name ? `\nФайл: ${message.file_name}` : "";
+    return `${index + 1}/${messages.length} · Отправитель: ID ${message.sender_id} · ${archivedMessageKindText(message.kind)}\n${moscowDateTime(message.created_at_ms)} МСК${fileName}${payload ? `\n${String(payload)}` : ""}`;
+  });
+
+  const chunks = [];
+  let current = `Сессия #${sessionId} · вся переписка (${messages.length} сообщ.)`;
+
+  for (const entry of entries) {
+    const addition = `\n\n${entry}`;
+    if (current.length + addition.length <= TRANSCRIPT_CHUNK_LIMIT) {
+      current += addition;
+      continue;
+    }
+
+    if (current) {
+      chunks.push(current);
+      current = "";
+    }
+
+    let remaining = entry;
+    while (remaining.length > TRANSCRIPT_CHUNK_LIMIT) {
+      let end = TRANSCRIPT_CHUNK_LIMIT;
+      const code = remaining.charCodeAt(end - 1);
+      if (code >= 0xD800 && code <= 0xDBFF) end -= 1;
+      chunks.push(remaining.slice(0, end));
+      remaining = remaining.slice(end);
+    }
+    current = remaining;
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
+}
+
 export function chatSessionText(session, now = Date.now()) {
   const active = session.status === "active";
   const until = active ? now : session.ended_at_ms;
@@ -545,7 +605,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
 
   function sessionDetailKeyboard(session, listKind, page) {
     const keyboard = new InlineKeyboard();
-    if (Number(session.message_count) > 0) keyboard.text("💬 Открыть переписку", `anon_message:${session.id}:0`).row();
+    if (Number(session.message_count) > 0) keyboard.text("💬 Показать всю переписку", `anon_message:${session.id}:0`).row();
     if (Number(session.media_count) > 0) keyboard.text("📎 Retention-вложения", `anon_attachment:${session.id}:0`).row();
     if (Number(session.media_count) > 0) {
       keyboard.text(
@@ -555,15 +615,6 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     }
     keyboard.text("🗑 Удалить сессию", `anon_delete:${session.id}:${listKind}:${page}`).row();
     keyboard.text("← К списку", `${listKind === "a" ? "anon_sessions" : "anon_retained"}:${page}`);
-    return keyboard;
-  }
-
-  function messageNavigationKeyboard(sessionId, offset, total) {
-    const keyboard = new InlineKeyboard();
-    if (offset > 0) keyboard.text("← Предыдущее", `anon_message:${sessionId}:${offset - 1}`);
-    if (offset + 1 < total) keyboard.text("Следующее →", `anon_message:${sessionId}:${offset + 1}`);
-    if (offset > 0 || offset + 1 < total) keyboard.row();
-    keyboard.text("Сессия", `anon_session:${sessionId}:m:0`);
     return keyboard;
   }
 
@@ -606,44 +657,48 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     return null;
   }
 
-  async function sendSessionMessage(ctx, sessionId, requestedOffset) {
+  async function sendSessionMessage(ctx, sessionId) {
     if (!requirePrivateSessionArchive(ctx)) {
       await ctx.answerCallbackQuery({ text: "Архив доступен только в личном чате.", show_alert: true });
       return;
     }
     store.purgeExpiredChatSessions();
-    const offset = Math.max(0, Number(requestedOffset) || 0);
-    const result = store.listChatSessionMessages(sessionId, { limit: 1, offset });
-    const message = result.items[0];
-    if (!message) {
-      await ctx.answerCallbackQuery({ text: "Сообщение удалено или сессия уже истекла.", show_alert: true });
+    const result = readFullSessionTranscript(store, sessionId);
+    if (!result.items.length) {
+      await ctx.answerCallbackQuery({ text: "Переписка удалена или сессия уже истекла.", show_alert: true });
       return;
     }
-    await ctx.answerCallbackQuery(`Сообщение ${offset + 1} из ${result.total}`);
-    const payload = message.text || message.caption || (message.kind === "sticker" ? message.sticker_emoji : "") || "";
-    const fileName = message.file_name ? `\nФайл: ${message.file_name}` : "";
-    const entry = `Сессия #${sessionId} · сообщение ${offset + 1}/${result.total}\nОтправитель: ID ${message.sender_id}\nТип: ${archivedMessageKindText(message.kind)}\n${moscowDateTime(message.created_at_ms)} МСК${fileName}${payload ? `\n\n${clippedText(payload)}` : ""}`;
-    await ctx.reply(entry, { reply_markup: messageNavigationKeyboard(sessionId, offset, result.total), protect_content: true });
 
-    if (!message.file_id) return;
-    const resolved = store.resolveChatSessionMessageAttachment(message.id);
-    if (resolved?.absolutePath) {
-      try {
-        await sendLocalMessageAttachment(ctx, message, new InputFile(resolved.absolutePath));
-        return;
-      } catch {
-        console.error(`Admin local transcript attachment delivery failed for message ${message.id}`);
-      }
+    await ctx.answerCallbackQuery(`Открываю всю переписку: ${result.items.length} сообщ.`);
+    const chunks = buildSessionTranscriptChunks(sessionId, result.items);
+    const backKeyboard = new InlineKeyboard().text("← Сессия", `anon_session:${sessionId}:m:0`);
+    for (let index = 0; index < chunks.length; index += 1) {
+      const sendOptions = { protect_content: true };
+      if (index === chunks.length - 1) sendOptions.reply_markup = backKeyboard;
+      await ctx.reply(chunks[index], sendOptions);
     }
-    if (options.sourceArchiveSender) {
-      try {
-        await options.sourceArchiveSender(ctx.chat.id, message);
-        return;
-      } catch {
-        console.error(`Admin source transcript attachment delivery failed for message ${message.id}`);
+
+    for (const message of result.items) {
+      if (!message.file_id) continue;
+      const resolved = store.resolveChatSessionMessageAttachment(message.id);
+      if (resolved?.absolutePath) {
+        try {
+          await sendLocalMessageAttachment(ctx, message, new InputFile(resolved.absolutePath));
+          continue;
+        } catch {
+          console.error(`Admin local transcript attachment delivery failed for message ${message.id}`);
+        }
       }
+      if (options.sourceArchiveSender) {
+        try {
+          await options.sourceArchiveSender(ctx.chat.id, message);
+          continue;
+        } catch {
+          console.error(`Admin source transcript attachment delivery failed for message ${message.id}`);
+        }
+      }
+      await ctx.reply(`Вложение сообщения #${message.id} сейчас недоступно для просмотра.`);
     }
-    await ctx.reply("Вложение этого сообщения сейчас недоступно для просмотра.");
   }
 
   async function sendSessionMedia(ctx, sessionId, requestedOffset) {
