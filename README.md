@@ -20,4 +20,3 @@ SEO-лендинг для Telegram-бота [@anon_gender_chat_ru_bot](https://t
 - [Рандомный чат Telegram](https://terratectra.github.io/anon-gender-chat-ru/random-chat-telegram.html)
 - [Анонимный чат без рекламы](https://terratectra.github.io/anon-gender-chat-ru/anonimnyy-chat-bez-reklamy.html)
 
-Контакт: [nikidom123@gmail.com](mailto:nikidom123@gmail.com)
