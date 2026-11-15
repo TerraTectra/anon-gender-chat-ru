@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { InputFile } from "grammy";
@@ -109,7 +110,14 @@ export function createAnonVariantBot(id, token, adminIds) {
     const results = await Promise.allSettled(calls);
     if (results.some((result) => result.status === "rejected")) throw new Error("Profile sync failed: " + id);
     const photo = ensureVariantAvatar(brand);
-    await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(photo) });
+    const digest = crypto.createHash("sha256").update(fs.readFileSync(photo)).digest("hex");
+    const marker = path.resolve("./data/anon-variants/avatar-state/" + id + ".sha256");
+    const previous = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : "";
+    if (previous !== digest) {
+      await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(photo) });
+      fs.mkdirSync(path.dirname(marker), { recursive: true });
+      fs.writeFileSync(marker, digest + "\n");
+    }
   };
   return bot;
 }
