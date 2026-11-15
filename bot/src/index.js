@@ -14,6 +14,7 @@ import {
   createToolsBot
 } from "./niche-bots.js";
 import { createUserBot } from "./user-bot.js";
+import { createAnonVariantBot } from "./anon-variants.js";
 import { menuKeyboard } from "./keyboards.js";
 import { installTelegramReliability } from './telegram-reliability.js';
 import { telegramConnectionStatus } from './telegram-health.js';
@@ -21,6 +22,7 @@ import { telegramTransportMode, closeTelegramTransport } from './telegram-transp
 import { isTelegramPollingConflict, safeErrorSummary } from "./safe-error.js";
 import { acquireSingleInstance, AlreadyRunningError, SINGLE_INSTANCE_EXIT_CODE } from "./single-instance.js";
 
+const anonVariantsEnabled = process.env.ANON_VARIANTS_ENABLED === "1";
 const token = process.env.BOT_TOKEN?.trim();
 const adminToken = process.env.ADMIN_BOT_TOKEN?.trim();
 const englishToken = process.env.ENGLISH_BOT_TOKEN?.trim();
@@ -58,18 +60,18 @@ const quizDbPath = process.env.QUIZ_DB_PATH || "./data/quiz.db";
 const partyDbPath = process.env.PARTY_DB_PATH || "./data/party.db";
 const sessionArchiveRoot = process.env.SESSION_ARCHIVE_ROOT || undefined;
 const userBot = createUserBot(token, dbPath, { sessionArchiveRoot, adminIds: process.env.ADMIN_IDS });
-const partyBot = partyToken ? createJoinGuardBot(partyToken, partyDbPath) : null;
+const partyBot = partyToken ? (anonVariantsEnabled ? createAnonVariantBot("party", partyToken, process.env.ADMIN_IDS) : createJoinGuardBot(partyToken, partyDbPath)) : null;
 let channelPublisher = null;
 const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
   sessionArchiveRoot,
-  englishDbPath: englishToken ? englishDbPath : null,
-  focusDbPath: focusToken ? focusDbPath : null,
-  gameDbPath: gameToken ? gameDbPath : null,
-  budgetDbPath: budgetToken ? budgetDbPath : null,
-  hubDbPath: hubToken ? hubDbPath : null,
-  taskDbPath: taskToken ? taskDbPath : null,
-  quizDbPath: quizToken ? quizDbPath : null,
-  partyDbPath: partyToken ? partyDbPath : null,
+  englishDbPath: englishToken && !anonVariantsEnabled ? englishDbPath : null,
+  focusDbPath: focusToken && !anonVariantsEnabled ? focusDbPath : null,
+  gameDbPath: gameToken && !anonVariantsEnabled ? gameDbPath : null,
+  budgetDbPath: budgetToken && !anonVariantsEnabled ? budgetDbPath : null,
+  hubDbPath: hubToken && !anonVariantsEnabled ? hubDbPath : null,
+  taskDbPath: taskToken && !anonVariantsEnabled ? taskDbPath : null,
+  quizDbPath: quizToken && !anonVariantsEnabled ? quizDbPath : null,
+  partyDbPath: partyToken && !anonVariantsEnabled ? partyDbPath : null,
   healthPath: process.env.HEALTH_PATH || "./data/health.json",
   reportStatePath: process.env.ADMIN_REPORT_STATE_PATH || "./data/admin-report-state.json",
   reportHour: Number(process.env.ADMIN_REPORT_HOUR || 10),
@@ -109,13 +111,13 @@ channelPublisher = new ChannelPublisher(
   process.env.CHANNELS_CONFIG_PATH || "./content/channels.json",
   process.env.CHANNELS_STATE_PATH || "./data/channel-publisher-state.json"
 );
-const englishBot = englishToken ? createStudyBot(englishToken, englishDbPath) : null;
-const focusBot = focusToken ? createRandomBot(focusToken, focusDbPath) : null;
-const gameBot = gameToken ? createDatingBot(gameToken, gameDbPath) : null;
-const budgetBot = budgetToken ? createRatesBot(budgetToken, budgetDbPath) : null;
-const hubBot = hubToken ? createToolsBot(hubToken, hubDbPath) : null;
-const taskBot = taskToken ? createPostBot(taskToken, taskDbPath) : null;
-const quizBot = quizToken ? createMediaBot(quizToken, quizDbPath) : null;
+const englishBot = englishToken ? (anonVariantsEnabled ? createAnonVariantBot("english", englishToken, process.env.ADMIN_IDS) : createStudyBot(englishToken, englishDbPath)) : null;
+const focusBot = focusToken ? (anonVariantsEnabled ? createAnonVariantBot("focus", focusToken, process.env.ADMIN_IDS) : createRandomBot(focusToken, focusDbPath)) : null;
+const gameBot = gameToken ? (anonVariantsEnabled ? createAnonVariantBot("game", gameToken, process.env.ADMIN_IDS) : createDatingBot(gameToken, gameDbPath)) : null;
+const budgetBot = budgetToken ? (anonVariantsEnabled ? createAnonVariantBot("budget", budgetToken, process.env.ADMIN_IDS) : createRatesBot(budgetToken, budgetDbPath)) : null;
+const hubBot = hubToken ? (anonVariantsEnabled ? createAnonVariantBot("hub", hubToken, process.env.ADMIN_IDS) : createToolsBot(hubToken, hubDbPath)) : null;
+const taskBot = taskToken ? (anonVariantsEnabled ? createAnonVariantBot("task", taskToken, process.env.ADMIN_IDS) : createPostBot(taskToken, taskDbPath)) : null;
+const quizBot = quizToken ? (anonVariantsEnabled ? createAnonVariantBot("quiz", quizToken, process.env.ADMIN_IDS) : createMediaBot(quizToken, quizDbPath)) : null;
 adminBot.startDailyReportScheduler();
 channelPublisher.start();
 
@@ -184,8 +186,19 @@ function shutdown(status = "stopped", details = {}) {
     await userBot.stopPremium();
     safely(() => adminBot.stopDailyReportScheduler());
     safely(() => channelPublisher.stop());
-    await Promise.allSettled([adminBot, englishBot, focusBot, gameBot, budgetBot, hubBot, taskBot, quizBot, partyBot]
-      .filter(Boolean).map(bot => Promise.resolve().then(() => bot.stop())));
+    const publicBots = [englishBot, focusBot, gameBot, budgetBot, hubBot, taskBot, quizBot, partyBot].filter(Boolean);
+    if (anonVariantsEnabled) {
+      await Promise.allSettled(publicBots.map(async (bot) => {
+        bot.stopSessionRetention();
+        await bot.stopConcurrent();
+        await bot.stopPremium();
+        await bot.drainSessionMaintenance();
+        await bot.drainArchiveJobs(10_000);
+      }));
+      await Promise.resolve().then(() => adminBot.stop()).catch(() => {});
+    } else {
+      await Promise.allSettled([adminBot, ...publicBots].map(bot => Promise.resolve().then(() => bot.stop())));
+    }
     try {
       await userBot.drainSessionMaintenance();
       await userBot.drainArchiveJobs?.(90_000);
@@ -212,7 +225,7 @@ process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
 
 const publicNicheBots = [englishBot, focusBot, gameBot, budgetBot, hubBot, taskBot, quizBot, partyBot].filter(Boolean);
-for (const bot of publicNicheBots) installTelegramReliability(bot);
+if (!anonVariantsEnabled) for (const bot of publicNicheBots) installTelegramReliability(bot);
 // Profile refreshes are optional and must not delay anonymous chat/payment polling.
 void Promise.allSettled(publicNicheBots.map((bot) => bot.syncProfile?.())).then(results => {
   const failed=results.filter(result=>result.status==='rejected').length;
@@ -224,14 +237,14 @@ const starts = [
   userBot.startConcurrent(),
   adminBot.start({ drop_pending_updates: false })
 ];
-if (englishBot) starts.push(englishBot.start({ drop_pending_updates: false }));
-if (focusBot) starts.push(focusBot.start({ drop_pending_updates: false }));
-if (gameBot) starts.push(gameBot.start({ drop_pending_updates: false }));
-if (budgetBot) starts.push(budgetBot.start({ drop_pending_updates: false }));
-if (hubBot) starts.push(hubBot.start({ drop_pending_updates: false }));
-if (taskBot) starts.push(taskBot.start({ drop_pending_updates: false }));
-if (quizBot) starts.push(quizBot.start({ drop_pending_updates: false }));
-if (partyBot) starts.push(partyBot.start({ drop_pending_updates: false }));
+if (englishBot) starts.push(anonVariantsEnabled ? englishBot.startConcurrent() : englishBot.start({ drop_pending_updates: false }));
+if (focusBot) starts.push(anonVariantsEnabled ? focusBot.startConcurrent() : focusBot.start({ drop_pending_updates: false }));
+if (gameBot) starts.push(anonVariantsEnabled ? gameBot.startConcurrent() : gameBot.start({ drop_pending_updates: false }));
+if (budgetBot) starts.push(anonVariantsEnabled ? budgetBot.startConcurrent() : budgetBot.start({ drop_pending_updates: false }));
+if (hubBot) starts.push(anonVariantsEnabled ? hubBot.startConcurrent() : hubBot.start({ drop_pending_updates: false }));
+if (taskBot) starts.push(anonVariantsEnabled ? taskBot.startConcurrent() : taskBot.start({ drop_pending_updates: false }));
+if (quizBot) starts.push(anonVariantsEnabled ? quizBot.startConcurrent() : quizBot.start({ drop_pending_updates: false }));
+if (partyBot) starts.push(anonVariantsEnabled ? partyBot.startConcurrent() : partyBot.start({ drop_pending_updates: false }));
 try {
   await Promise.all(starts);
   await shutdown();
