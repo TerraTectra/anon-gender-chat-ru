@@ -25,6 +25,7 @@ export function installPremium(bot,store,options={}) {
  const admins=String(options.adminIds||'').split(',').map(Number).filter(id=>Number.isSafeInteger(id)&&id>0);
  async function notifyAdmins(text){await Promise.allSettled(admins.map(id=>bot.paymentAdminNotifier?bot.paymentAdminNotifier(id,text):bot.api.sendMessage(id,text)));}
  async function showPremium(ctx){
+  if(options.disableSales) return ctx.reply('В тестовой версии этого чата платные функции временно отключены. Случайный поиск бесплатный, фильтры доступны до 50 совпадений в сутки.');
   if(ctx.chat?.type!=='private')return ctx.reply('Премиум доступен в личном чате с ботом.');
   const until=premium.until(ctx.from.id);
   const status=until>Date.now()?`Действует до ${premiumDate(until)}.`:'Сейчас у вас бесплатный доступ.';
@@ -50,6 +51,7 @@ export function installPremium(bot,store,options={}) {
 
  // Payment service updates bypass chat/session queues and bans. Checkout must be answered in under 10 seconds.
  bot.on('pre_checkout_query',async ctx=>{
+  if(options.disableSales) return ctx.answerPreCheckoutQuery(false,{error_message:'Платные функции отключены на время эксперимента.'});
   let ok=true;
   try{
    if(store.isBanned(ctx.from.id)||!ready(store.getUser(ctx.from.id)))throw new Error('profile_unavailable');
@@ -85,6 +87,7 @@ export function installPremium(bot,store,options={}) {
  bot.hears(labels.premium,showPremium);
  bot.callbackQuery('premium:terms',async ctx=>{await ctx.answerCallbackQuery();await ctx.reply(TERMS_TEXT);});
  bot.callbackQuery(/^premium:plan:(week|month|quarter)$/,async ctx=>{
+   if(options.disableSales) return ctx.answerCallbackQuery({text:'Платные функции отключены на время эксперимента.',show_alert:true});
   await ctx.answerCallbackQuery();
   if(ctx.chat?.type!=='private')return;
   if(store.isBanned(ctx.from.id))return ctx.reply('Доступ к чату ограничен. По оплате: /paysupport.');

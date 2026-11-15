@@ -148,7 +148,7 @@ export function retainedMediaFromMessage(message) {
   return null;
 }
 
-export function postChatKeyboard(userId = null, botUsername = null) {
+export function postChatKeyboard(userId = null, botUsername = null, isVariant = false) {
   const keyboard = new InlineKeyboard()
     .text("🎲 Найти ещё", "postchat:search");
 
@@ -158,6 +158,8 @@ export function postChatKeyboard(userId = null, botUsername = null) {
     keyboard.url("📤 Позвать друга", shareUrl);
   }
 
+  if (isVariant) return keyboard.row().url("💬 Основной анонимный чат", "https://t.me/anon_gender_chat_ru_bot?start=src_variant_referral");
+  if (process.env.ANON_VARIANTS_ENABLED === "1") return keyboard;
   return keyboard
     .row()
     .url("📥 Скачать видео", "https://t.me/TectraQuizBot?start=src_anon_postchat_video")
@@ -168,7 +170,7 @@ export function createUserBot(token, dbPath, options = {}) {
   const store = options.store ?? new Store(dbPath, { sessionArchiveRoot: options.sessionArchiveRoot });
   const bot = new Bot(token, { client: telegramClientOptions() });
   installTelegramReliability(bot, { onForbidden: id => store.markBotBlocked(id) });
-  const { showPremium, showVisibility } = installPremium(bot, store, { adminIds: options.adminIds });
+  const { showPremium, showVisibility } = installPremium(bot, store, { adminIds: options.adminIds, disableSales: options.isVariant });
   let runner;
   let pollingStopping = false;
   bot.startConcurrent = async () => {
@@ -177,13 +179,13 @@ export function createUserBot(token, dbPath, options = {}) {
     if (pollingStopping) return;
     await bot.api.deleteWebhook({ drop_pending_updates: false });
     if (pollingStopping) return;
-    runner = run(bot, { sink: { concurrency: 24 }, runner: { fetch: { timeout: 10, allowed_updates: ['message','callback_query','my_chat_member','pre_checkout_query'] }, maxRetryTime: 5 * 60_000, retryInterval: 'exponential', silent: true } });
-    bot.startPremiumReconciliation();
+    runner = run(bot, { sink: { concurrency: options.concurrency ?? 24 }, runner: { fetch: { timeout: 10, allowed_updates: ['message','callback_query','my_chat_member','pre_checkout_query'] }, maxRetryTime: 5 * 60_000, retryInterval: 'exponential', silent: true } });
+    if (!options.isVariant) bot.startPremiumReconciliation();
     return runner.task();
   };
   bot.stopConcurrent = async () => { pollingStopping = true; if (runner) await runner.stop(); };
   bot.pollingState = () => ({ running: Boolean(runner?.isRunning()), inFlight: runner?.size() || 0 });
-  const showCatalog = createCatalogHandler("anon");
+  const showCatalog = createCatalogHandler(options.brandId ?? "anon");
   // Keep button actions and slash commands routed to exactly the same handler.
   const registerAction = (label, command, handler) => {
     bot.hears(label, handler);
@@ -463,7 +465,7 @@ export function createUserBot(token, dbPath, options = {}) {
     store.recordEvent(ctx.from.id, "start");
     if (!profileReady(user)) {
       ctx.session.step = "gender";
-      await ctx.reply(`Добро пожаловать в анонимный чат 12+. Аккаунты собеседников скрыты, а пользователи 12–17 и 18+ никогда не смешиваются.\n\n${MEDIA_RETENTION_NOTICE}\n\nКто вы?`, { reply_markup: genderKeyboard });
+      await ctx.reply(`Добро пожаловать в ${options.brandName || "анонимный чат"} 12+. Аккаунты собеседников скрыты, а пользователи 12–17 и 18+ никогда не смешиваются.\n\n${MEDIA_RETENTION_NOTICE}\n\nКто вы?`, { reply_markup: genderKeyboard });
       return;
     }
     await ctx.reply(`Готово. Выберите поиск.\n\n${MEDIA_RETENTION_NOTICE}`, { reply_markup: menuKeyboard });
@@ -530,13 +532,13 @@ export function createUserBot(token, dbPath, options = {}) {
     ctx.session.pendingReportId = null;
     const message = partnerId ? "Чат завершён." : user?.state === "searching" ? "Поиск остановлен." : "Вы не участвуете в чате или поиске.";
     await ctx.reply(message, {
-      reply_markup: partnerId ? postChatKeyboard(ctx.from.id, ctx.me.username) : menuKeyboard
+      reply_markup: partnerId ? postChatKeyboard(ctx.from.id, ctx.me.username, options.isVariant) : menuKeyboard
     });
     await notifyPartner(
       ctx,
       partnerId,
       "Собеседник завершил чат.",
-      postChatKeyboard(partnerId, ctx.me.username)
+      postChatKeyboard(partnerId, ctx.me.username, options.isVariant)
     );
   });
 

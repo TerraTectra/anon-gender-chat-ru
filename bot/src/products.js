@@ -1,4 +1,4 @@
-export const products = [
+const legacyProducts = [
   { id:"anon", category:"social", name:"Анонимный чат 12+", username:"anon_gender_chat_ru_bot", icon:"💬", keywords:["чат","общение","анонимно","рулетка","собеседник"], tagline:"Анонимное общение один на один", description:"Быстрый поиск собеседника, фильтры, жалобы и блокировки." },
   { id:"music", category:"media", name:"Tectra Music", username:"EnglishTalkMatchBot", icon:"🎵", keywords:["музыка","песня","скачать","трек","audio","music"], tagline:"Найти и скачать музыку", description:"Ищет трек по названию или публичной ссылке и возвращает аудио в Telegram." },
   { id:"random", category:"utility", name:"Tectra Random", username:"FocusSprintTimerBot", icon:"🎲", keywords:["рандом","рандомайзер","жребий","победитель","случайный","random"], tagline:"Рандомайзер и жеребьёвки", description:"Числа, выбор из списка, монетка, кубик и перемешивание." },
@@ -9,6 +9,144 @@ export const products = [
   { id:"approve", category:"admin", name:"Tectra Auto Approve", username:"TectraPartyBot", icon:"✅", keywords:["заявки","автоприем","вступление","канал","группа","join"], tagline:"Автоприём заявок на вступление", description:"Автоматически принимает join requests в группах и каналах." },
   { id:"nearby", category:"utility", name:"Tectra Nearby", username:"TerraTectraBotsBot", icon:"📍", keywords:["рядом","кафе","аптека","банкомат","ресторан","места","nearby"], tagline:"Найти полезные места рядом", description:"Ищет кафе, рестораны, аптеки, банкоматы, АЗС и отели рядом через OpenStreetMap." }
 ];
+
+const variantProducts = [
+  {
+    "id": "anon",
+    "category": "social",
+    "name": "Анонимный чат 12+",
+    "username": "anon_gender_chat_ru_bot",
+    "icon": "💬",
+    "keywords": [
+      "анонимно",
+      "чат",
+      "рандом"
+    ],
+    "tagline": "Оригинальный анонимный чат",
+    "description": "Случайный и фильтрованный поиск."
+  },
+  {
+    "id": "english",
+    "category": "social",
+    "name": "Искра — анонимный чат",
+    "username": "EnglishTalkMatchBot",
+    "icon": "✨",
+    "keywords": [
+      "анонимно",
+      "чат",
+      "рандом",
+      "собеседник"
+    ],
+    "tagline": "Анонимное общение один на один",
+    "description": "Случайный поиск, фильтры и возрастное разделение."
+  },
+  {
+    "id": "focus",
+    "category": "social",
+    "name": "Полночь — анонимный чат",
+    "username": "FocusSprintTimerBot",
+    "icon": "🌙",
+    "keywords": [
+      "анонимно",
+      "чат",
+      "рандом",
+      "собеседник"
+    ],
+    "tagline": "Анонимное общение один на один",
+    "description": "Случайный поиск, фильтры и возрастное разделение."
+  },
+  {
+    "id": "game",
+    "category": "social",
+    "name": "На волне — анонимный чат",
+    "username": "GameMateFinderRuBot",
+    "icon": "🌊",
+    "keywords": [
+      "анонимно",
+      "чат",
+      "рандом",
+      "собеседник"
+    ],
+    "tagline": "Анонимное общение один на один",
+    "description": "Случайный поиск, фильтры и возрастное разделение."
+  },
+  {
+    "id": "budget",
+    "category": "social",
+    "name": "Без имени — анонимный чат",
+    "username": "PocketBudgetRuBot",
+    "icon": "🎭",
+    "keywords": [
+      "анонимно",
+      "чат",
+      "рандом",
+      "собеседник"
+    ],
+    "tagline": "Анонимное общение один на один",
+    "description": "Случайный поиск, фильтры и возрастное разделение."
+  },
+  {
+    "id": "hub",
+    "category": "social",
+    "name": "Тихая комната — анонимно",
+    "username": "TerraTectraBotsBot",
+    "icon": "🚪",
+    "keywords": [
+      "анонимно",
+      "чат",
+      "рандом",
+      "собеседник"
+    ],
+    "tagline": "Анонимное общение один на один",
+    "description": "Случайный поиск, фильтры и возрастное разделение."
+  },
+  {
+    "id": "task",
+    "category": "social",
+    "name": "Откровенно — анонимный чат",
+    "username": "DevTaks_bot",
+    "icon": "🗨️",
+    "keywords": [
+      "анонимно",
+      "чат",
+      "рандом",
+      "собеседник"
+    ],
+    "tagline": "Анонимное общение один на один",
+    "description": "Случайный поиск, фильтры и возрастное разделение."
+  },
+  {
+    "id": "quiz",
+    "category": "social",
+    "name": "Диалог 24 — анонимный чат",
+    "username": "TectraQuizBot",
+    "icon": "💬",
+    "keywords": [
+      "анонимно",
+      "чат",
+      "рандом",
+      "собеседник"
+    ],
+    "tagline": "Анонимное общение один на один",
+    "description": "Случайный поиск, фильтры и возрастное разделение."
+  },
+  {
+    "id": "party",
+    "category": "social",
+    "name": "Просто поговорим — чат",
+    "username": "TectraPartyBot",
+    "icon": "💜",
+    "keywords": [
+      "анонимно",
+      "чат",
+      "рандом",
+      "собеседник"
+    ],
+    "tagline": "Анонимное общение один на один",
+    "description": "Случайный поиск, фильтры и возрастное разделение."
+  }
+];
+export const products = process.env.ANON_VARIANTS_ENABLED === "1" ? variantProducts : legacyProducts;
 
 export const contentChannels = [
   {id:"ai",name:"TerraTectra AI Практика",username:"TerraTectraAI",icon:"🧩",tagline:"Прикладной ИИ и автоматизация"},
