@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { InputFile } from "grammy";
 import { createUserBot } from "./user-bot.js";
+import { Store } from "./store.js";
 
 export const anonVariants = Object.freeze([
   {
@@ -124,7 +125,7 @@ export function anonVariantMetrics() {
       row.active7 = db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM events WHERE created_at >= datetime('now','-7 days')").get().n;
       row.matches7 = db.prepare("SELECT COUNT(*) AS n FROM events WHERE type='match' AND created_at >= datetime('now','-7 days')").get().n;
       row.searching = db.prepare("SELECT COUNT(*) AS n FROM users WHERE state='searching'").get().n;
-      row.chatting = db.prepare("SELECT COUNT(*) AS n FROM users WHERE state='chatting'").get().n;
+      row.chatting = db.prepare("SELECT COUNT(*) AS n FROM users WHERE partner_id IS NOT NULL").get().n / 2;
       row.reports7 = db.prepare("SELECT COUNT(*) AS n FROM reports WHERE created_at >= datetime('now','-7 days')").get().n;
       row.ready = true;
     } finally {
@@ -132,4 +133,49 @@ export function anonVariantMetrics() {
     }
     return row;
   });
+}
+
+export function banAcrossAnonVariants(userId, banned) {
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("Invalid user id");
+  for (const brand of anonVariants) {
+    const filename = anonVariantDbPath(brand.id);
+    if (!fs.existsSync(filename)) continue;
+    const store = new Store(filename, { sessionArchiveRoot: path.resolve("./data/anon-variants/session-archive/" + brand.id) });
+    try {
+      if (banned) store.banUser(userId);
+      else store.unbanUser(userId);
+    } finally {
+      store.close();
+    }
+  }
+}
+
+export function pendingAnonVariantReports(limit = 30) {
+  const reports = [];
+  for (const brand of anonVariants) {
+    const filename = anonVariantDbPath(brand.id);
+    if (!fs.existsSync(filename)) continue;
+    const db = new DatabaseSync(filename, { readOnly: true });
+    try {
+      for (const item of db.prepare("SELECT id, reporter_id, reported_id, created_at FROM reports WHERE reviewed_at IS NULL ORDER BY id DESC LIMIT ?").all(limit)) {
+        reports.push({ ...item, variantId: brand.id, variantName: brand.name });
+      }
+    } finally {
+      db.close();
+    }
+  }
+  return reports.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit);
+}
+
+export function reviewAnonVariantReport(id, reportId) {
+  if (!anonVariants.some((brand) => brand.id === id) || !Number.isSafeInteger(reportId) || reportId < 1) return false;
+  const filename = anonVariantDbPath(id);
+  if (!fs.existsSync(filename)) return false;
+  const store = new Store(filename, { sessionArchiveRoot: path.resolve("./data/anon-variants/session-archive/" + id) });
+  try {
+    store.reviewReport(reportId);
+    return true;
+  } finally {
+    store.close();
+  }
 }
