@@ -1,5 +1,11 @@
 import "dotenv/config";
 
+// Guard against accidentally reverting the experiment brands with legacy profile definitions.
+if (process.env.ANON_VARIANTS_ENABLED === "1") {
+  console.error("Legacy profile updater disabled for multi-brand anonymous-chat rollout. Profiles are managed by createAnonVariantBot().syncProfile().");
+  process.exit(1);
+}
+
 const profiles = [
   ["BOT_TOKEN", "Анонимный чат 1-на-1 на русском: случайный и фильтрованный поиск, фото, видео и голосовые, жалобы и модерация. Группы 12–17 и 18+ разделены.", "Анонимный чат 1-на-1: быстрый поиск, фильтры и модерация."],
   ["ADMIN_BOT_TOKEN", "Приватный центр управления TerraTectra: боты, активные и медиасессии анонимного чата, каналы, источники, лиды и состояние системы.", "Приватная аналитика и управление TerraTectra."],
