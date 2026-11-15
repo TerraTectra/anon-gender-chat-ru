@@ -763,6 +763,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
         if (!row.ready) return row.name + ": ещё не запущен";
         return row.name + ": " + row.users + " пользователей, стартов 7д " + row.starts7
           + ", активны 7д " + row.active7 + ", совпадений 7д " + row.matches7
+          + ", D1 " + (row.d1 === null ? "—" : row.d1 + "%") + ", D7 " + (row.d7 === null ? "—" : row.d7 + "%")
           + ", ищут " + row.searching + ", жалоб 7д " + row.reports7;
       });
       await ctx.reply("Анонимные варианты, 90-дневный эксперимент\nВсего регистраций в вариантах: " + total
