@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { InputFile } from "grammy";
 import { createUserBot } from "./user-bot.js";
 import { Store } from "./store.js";
+import { ensureVariantAvatar } from "./avatar-generator.js";
 
 export const anonVariants = Object.freeze([
   {
@@ -107,8 +108,8 @@ export function createAnonVariantBot(id, token, adminIds) {
     ];
     const results = await Promise.allSettled(calls);
     if (results.some((result) => result.status === "rejected")) throw new Error("Profile sync failed: " + id);
-    const photo = path.resolve("./assets/avatars/" + id + ".png");
-    if (fs.existsSync(photo)) await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(photo) });
+    const photo = ensureVariantAvatar(brand);
+    await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(photo) });
   };
   return bot;
 }
