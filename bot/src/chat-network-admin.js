@@ -1,0 +1,268 @@
+import fs from "node:fs";
+import path from "node:path";
+import { InputFile, InlineKeyboard } from "grammy";
+import { Store } from "./store.js";
+import { anonVariants, anonVariantDbPath } from "./anon-variants.js";
+
+const PAGE_SIZE = 8;
+const TIMELINE_SIZE = 8;
+const BRANDS = [{ id: "anon", name: "Основной анонимный чат", username: "anon_gender_chat_ru_bot" }, ...anonVariants];
+const IDS = "(anon|english|focus|game|budget|hub|task|quiz|party)";
+const dateLabel = time => time ? new Date(Number(time)).toLocaleString("ru-RU", { timeZone: "Europe/Moscow", dateStyle: "short", timeStyle: "short" }) : "неизвестно";
+const userLabel = user => (user?.username ? "@" + user.username : "ID " + user?.id);
+const validPage = value => Math.max(0, Math.min(1000000, Number(value) || 0));
+const kindLabel = kind => ({ text: "Текст", photo: "Фото", video: "Видео", voice: "Голосовое", video_note: "Кружок", document: "Документ", sticker: "Стикер", animation: "Анимация" })[kind] || kind;
+export function splitTelegramText(value, maxLength = 3600) {
+  const parts = [];
+  let remaining = String(value ?? "");
+  while (remaining.length > maxLength) {
+    let end = maxLength;
+    const last = remaining.charCodeAt(end - 1);
+    if (last >= 0xD800 && last <= 0xDBFF) end -= 1;
+    parts.push(remaining.slice(0, end));
+    remaining = remaining.slice(end);
+  }
+  if (remaining.length) parts.push(remaining);
+  return parts;
+}
+
+function sessionInfo(session) {
+  const participants = session.participants.map((user, index) =>
+    (index + 1) + ". " + userLabel(user) + " · " + (user.age ?? "—") + " лет"
+  ).join("\n");
+  return "Сессия #" + session.id + " · " + (session.status === "active" ? "активна" : "завершена")
+    + "\nНачало: " + dateLabel(session.started_at_ms)
+    + "\nПоследняя активность: " + dateLabel(session.last_activity_at_ms)
+    + "\nСообщений: " + Number(session.message_count || 0)
+    + "\nМедиа: " + Number(session.media_count || 0)
+    + "\nИзбранное: " + (Number(session.is_favorite) ? "да" : "нет")
+    + "\n\nУчастники:\n" + participants;
+}
+
+export function installChatNetworkAdmin(bot, originalStore, options = {}) {
+  const stores = new Map([["anon", originalStore]]);
+  for (const brand of anonVariants) {
+    stores.set(brand.id, new Store(anonVariantDbPath(brand.id), {
+      sessionArchiveRoot: path.resolve("./data/anon-variants/session-archive/" + brand.id)
+    }));
+  }
+  const brand = id => BRANDS.find(item => item.id === id);
+  const store = id => stores.get(id);
+  const privateChat = ctx => ctx.chat?.type === "private";
+  const replyKeyboard = id => new InlineKeyboard()
+    .text("💬 Активные", "multi_list:" + id + ":a:0")
+    .text("🗂 Архив", "multi_list:" + id + ":m:0").row()
+    .text("← Все чаты", "multi_home");
+
+  function allKeyboard() {
+    const keyboard = new InlineKeyboard();
+    BRANDS.forEach((b,i)=>{ if(i) keyboard.row(); keyboard.text(b.name,"multi_brand:"+b.id); });
+    return keyboard;
+  }
+
+  async function dashboard(ctx, edit = false) {
+    if (!privateChat(ctx)) return ctx.reply("Раздел доступен в личном чате с админ-ботом.");
+    const rows = BRANDS.map(b => {
+      const stats = store(b.id).stats();
+      const growth = store(b.id).growthStats();
+      return b.name + "\n@" + b.username + " · пользователей " + stats.users
+        + " · ищут " + stats.searching + " · активных пар " + stats.chatting
+        + " · совпадений за 7 дней " + growth.matches7 + " · жалоб " + stats.reports;
+    });
+    const message = "💬 Все анонимные чаты (" + BRANDS.length + ")\n\n" + rows.join("\n\n");
+    if (edit) return ctx.editMessageText(message, { reply_markup: allKeyboard() });
+    return ctx.reply(message, { reply_markup: allKeyboard() });
+  }
+
+  async function viewBrand(ctx, id) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const st = store(id);
+    if (!st) return ctx.answerCallbackQuery({ text: "Бот не найден", show_alert: true });
+    const stats = st.stats();
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(brand(id).name + "\n@" + brand(id).username + "\n\n"
+      + "Всего пользователей: " + stats.users + "\nИщут: " + stats.searching
+      + "\nАктивных пар: " + stats.chatting + "\nНовых жалоб: " + stats.reports,
+      { reply_markup: replyKeyboard(id) });
+  }
+
+  function listKeyboard(id, kind, result, page) {
+    const keyboard = new InlineKeyboard();
+    for (const session of result.items) {
+      keyboard.text((session.status === "active" ? "🟢" : Number(session.is_favorite) ? "⭐" : "🗂")
+        + " #" + session.id + " · " + (session.message_count || 0) + " сообщ.",
+      "multi_session:" + id + ":" + session.id + ":" + kind + ":" + page).row();
+    }
+    if (page > 0) keyboard.text("← Ранее", "multi_list:" + id + ":" + kind + ":" + (page - 1));
+    if ((page + 1) * PAGE_SIZE < result.total) keyboard.text("Далее →", "multi_list:" + id + ":" + kind + ":" + (page + 1));
+    keyboard.row().text("← Бот", "multi_brand:" + id);
+    return keyboard;
+  }
+
+  async function viewList(ctx, id, kind, page = 0, edit = true) {
+    if (!privateChat(ctx)) return ctx.reply("Архив доступен только в личном чате.");
+    const st = store(id);
+    if (!st) return ctx.answerCallbackQuery({ text: "Бот не найден", show_alert: true });
+    page = validPage(page);
+    st.purgeExpiredChatSessions();
+    const result = kind === "a" ? st.listActiveChatSessions({ limit: PAGE_SIZE, offset: page * PAGE_SIZE })
+      : st.listRetainedChatSessions({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+    const info = result.items.map(item => "#" + item.id + " · " + (item.message_count || 0)
+      + " сообщ. · " + dateLabel(item.last_activity_at_ms)).join("\n") || "Сессий пока нет.";
+    const message = brand(id).name + (kind === "a" ? " · активные сессии" : " · архивные сессии")
+      + "\nВсего: " + result.total + "\n\n" + info;
+    if (edit) return ctx.editMessageText(message, { reply_markup: listKeyboard(id, kind, result, page) });
+    return ctx.reply(message, { reply_markup: listKeyboard(id, kind, result, page) });
+  }
+
+  function sessionKeyboard(id, session, kind, page) {
+    const keyboard = new InlineKeyboard();
+    if (Number(session.message_count || 0) > 0)
+      keyboard.text("📖 Переписка по порядку", "multi_timeline:" + id + ":" + session.id + ":0").row();
+    if (Number(session.media_count || 0) > 0)
+      keyboard.text(Number(session.is_favorite) ? "☆ Убрать избранное" : "⭐ В избранное",
+        "multi_favorite:" + id + ":" + session.id + ":" + (Number(session.is_favorite) ? 0 : 1)
+        + ":" + kind + ":" + page).row();
+    session.participants.forEach((user, index) => {
+      keyboard.text("⛔ Бан участника " + (index + 1) + " · " + user.id,
+        "multi_ban:" + id + ":" + session.id + ":" + index + ":" + kind + ":" + page).row();
+    });
+    return keyboard.text("← Список", "multi_list:" + id + ":" + kind + ":" + page);
+  }
+
+  async function viewSession(ctx, id, sessionId, kind, page) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const st = store(id);
+    st.purgeExpiredChatSessions();
+    const session = st.getChatSession(sessionId);
+    if (!session) return ctx.answerCallbackQuery({ text: "Сессия недоступна", show_alert: true });
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(brand(id).name + "\n\n" + sessionInfo(session), {
+      reply_markup: sessionKeyboard(id, session, kind, page)
+    });
+  }
+
+  async function sendAttachment(ctx, msg, caption, id, localFile) {
+    const common = { protect_content: true };
+    if (caption) common.caption = caption.slice(0, 1000);
+    const api = ctx.api, chatId = ctx.chat.id;
+    if (localFile) {
+      const input = new InputFile(localFile);
+      if (msg.kind === "photo") return api.sendPhoto(chatId, input, common);
+      if (msg.kind === "video") return api.sendVideo(chatId, input, common);
+      if (msg.kind === "voice") return api.sendVoice(chatId, input, common);
+      if (msg.kind === "video_note") return api.sendVideoNote(chatId, input, { protect_content: true });
+      if (msg.kind === "document") return api.sendDocument(chatId, input, common);
+      if (msg.kind === "sticker") return api.sendSticker(chatId, input, { protect_content: true });
+      if (msg.kind === "animation") return api.sendAnimation(chatId, input, common);
+    }
+    if (!options.sourceArchiveSender) throw new Error("No source media sender");
+    return options.sourceArchiveSender(chatId, msg, id, caption);
+  }
+
+  async function timeline(ctx, id, sessionId, offset = 0) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const st = store(id), session = st.getChatSession(sessionId);
+    offset = validPage(offset);
+    if (!session) return ctx.answerCallbackQuery({ text: "Сессия недоступна", show_alert: true });
+    const result = st.listChatSessionMessages(sessionId, { limit: TIMELINE_SIZE, offset });
+    if (!result.items.length) return ctx.answerCallbackQuery({ text: "Сообщений нет", show_alert: true });
+    await ctx.answerCallbackQuery();
+    for (const [index, msg] of result.items.entries()) {
+      const user = session.participants.find(person => person.id === msg.sender_id);
+      const heading = brand(id).name + " · #" + sessionId + "\n" + (offset + index + 1)
+        + "/" + result.total + " · " + userLabel(user) + " · " + dateLabel(msg.created_at_ms);
+      const body = String(msg.text || msg.caption || (msg.kind === "sticker" ? msg.sticker_emoji : ""));
+      const description = heading + "\n" + kindLabel(msg.kind) + (body ? "\n" + body : "");
+      if (msg.kind === "text" || !msg.file_id) {
+        for (const part of splitTelegramText(description)) await ctx.reply(part, { protect_content: true });
+        continue;
+      }
+      const captionable = !["sticker", "video_note"].includes(msg.kind);
+      const separateText = !captionable || description.length > 950;
+      if (separateText) {
+        for (const part of splitTelegramText(description)) await ctx.reply(part, { protect_content: true });
+      }
+      const mediaCaption = captionable ? (separateText ? heading + "\n" + kindLabel(msg.kind) : description) : null;
+      const local = st.resolveChatSessionMessageAttachment(msg.id);
+      let success = false;
+      try {
+        await sendAttachment(ctx, msg, mediaCaption, id, local?.absolutePath);
+        success = true;
+      } catch (error) {
+        if (local?.absolutePath) {
+          try { await sendAttachment(ctx, msg, mediaCaption, id, null); success = true; }
+          catch (fallbackError) { console.error("Timeline media unavailable", String(fallbackError?.code || "unknown")); }
+        }
+      }
+      if (!success) await ctx.reply(separateText ? "[Медиа недоступно]" : description + "\n[Медиа недоступно]", { protect_content: true });
+    }
+    const keyboard = new InlineKeyboard();
+    if (offset > 0) keyboard.text("← Ранее", "multi_timeline:" + id + ":" + sessionId + ":" + Math.max(0, offset - TIMELINE_SIZE));
+    if (offset + result.items.length < result.total)
+      keyboard.text("Далее →", "multi_timeline:" + id + ":" + sessionId + ":" + (offset + result.items.length));
+    keyboard.row().text("← К сессии", "multi_session:" + id + ":" + sessionId + ":m:0");
+    await ctx.reply("Просмотр " + (offset + 1) + "–" + (offset + result.items.length) + " из " + result.total,
+      { protect_content: true, reply_markup: keyboard });
+  }
+
+  bot.command("chats", ctx => dashboard(ctx));
+  bot.hears("💬 Все чаты", ctx => dashboard(ctx));
+  bot.callbackQuery("multi_home", async ctx => { await ctx.answerCallbackQuery(); await dashboard(ctx, true); });
+  bot.callbackQuery(new RegExp("^multi_brand:" + IDS + "$"), ctx => viewBrand(ctx, ctx.match[1]));
+  bot.callbackQuery(new RegExp("^multi_list:" + IDS + ":(a|m):(\\d+)$"), async ctx => {
+    await ctx.answerCallbackQuery();
+    await viewList(ctx, ctx.match[1], ctx.match[2], Number(ctx.match[3]));
+  });
+  bot.callbackQuery(new RegExp("^multi_session:" + IDS + ":(\\d+):(a|m):(\\d+)$"),
+    ctx => viewSession(ctx, ctx.match[1], Number(ctx.match[2]), ctx.match[3], Number(ctx.match[4])));
+  bot.callbackQuery(new RegExp("^multi_timeline:" + IDS + ":(\\d+):(\\d+)$"),
+    ctx => timeline(ctx, ctx.match[1], Number(ctx.match[2]), Number(ctx.match[3])));
+  bot.callbackQuery(new RegExp("^multi_favorite:" + IDS + ":(\\d+):(0|1):(a|m):(\\d+)$"), async ctx => {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const id=ctx.match[1], st=store(id), session=st.setChatSessionFavorite(Number(ctx.match[2]),ctx.match[3]==="1");
+    if(!session)return ctx.answerCallbackQuery({text:"Сессия недоступна",show_alert:true});
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(brand(id).name + "\n\n" + sessionInfo(session), {
+      reply_markup: sessionKeyboard(id,session,ctx.match[4],Number(ctx.match[5]))
+    });
+  });
+  bot.callbackQuery(new RegExp("^multi_ban:" + IDS + ":(\\d+):([01]):(a|m):(\\d+)$"), async ctx => {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const id=ctx.match[1], session=store(id).getChatSession(Number(ctx.match[2]));
+    const person=session?.participants[Number(ctx.match[3])];
+    if(!person)return ctx.answerCallbackQuery({text:"Сессия недоступна",show_alert:true});
+    await ctx.answerCallbackQuery();
+    const keyboard=new InlineKeyboard()
+      .text("Подтвердить бан ID " + person.id,"multi_ban_confirm:" + id + ":" + session.id + ":" + ctx.match[3])
+      .row().text("Отмена","multi_session:" + id + ":" + session.id + ":" + ctx.match[4] + ":" + ctx.match[5]);
+    await ctx.editMessageText("Заблокировать " + userLabel(person) + " в боте " + brand(id).name
+      + "?\nЕго текущий чат завершится. Остальные боты затронуты не будут.",{reply_markup:keyboard});
+  });
+  bot.callbackQuery(new RegExp("^multi_ban_confirm:" + IDS + ":(\\d+):([01])$"), async ctx => {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const id=ctx.match[1], st=store(id), session=st.getChatSession(Number(ctx.match[2]));
+    const person=session?.participants[Number(ctx.match[3])];
+    if(!person)return ctx.answerCallbackQuery({text:"Сессия недоступна",show_alert:true});
+    st.banUser(person.id);
+    if (session.status === "active" && options.sourceSessionNotifier) {
+      const other = session.participants.find(user => user.id !== person.id);
+      if (other) await options.sourceSessionNotifier(other.id, "Собеседник завершил чат.", id).catch(() => {});
+    }
+    await ctx.answerCallbackQuery("Участник заблокирован");
+    await ctx.editMessageText(userLabel(person) + " заблокирован в " + brand(id).name
+      + ".\nДругие боты не затронуты.\nРазблокировка: /unban_chat " + id + " " + person.id,
+      {reply_markup:new InlineKeyboard().text("← Все чаты","multi_home")});
+  });
+  bot.command("unban_chat",async ctx => {
+    if (!privateChat(ctx)) return ctx.reply("Только в личном чате.");
+    const [id,rawId]=String(ctx.match||"").trim().split(/\s+/), st=store(id), userId=Number(rawId);
+    if(!st||!Number.isSafeInteger(userId)||userId<=0)return ctx.reply("Формат: /unban_chat english 123456789");
+    st.unbanUser(userId);
+    await ctx.reply("Разблокирован ID " + userId + " в " + brand(id).name);
+  });
+
+  return { dashboard, viewList, timeline,
+    close() { for (const [id, st] of stores) if (id !== "anon") st.close(); }
+  };
+}

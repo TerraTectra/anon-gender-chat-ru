@@ -60,6 +60,7 @@ const quizDbPath = process.env.QUIZ_DB_PATH || "./data/quiz.db";
 const partyDbPath = process.env.PARTY_DB_PATH || "./data/party.db";
 const sessionArchiveRoot = process.env.SESSION_ARCHIVE_ROOT || undefined;
 const userBot = createUserBot(token, dbPath, { sessionArchiveRoot, adminIds: process.env.ADMIN_IDS });
+const variantBotRegistry = new Map();
 const partyBot = partyToken ? (anonVariantsEnabled ? createAnonVariantBot("party", partyToken, process.env.ADMIN_IDS) : createJoinGuardBot(partyToken, partyDbPath)) : null;
 let channelPublisher = null;
 const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
@@ -87,15 +88,17 @@ const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
     await userBot.api.sendMessage(chatId, caption, common);
     return userBot.api.sendVideoNote(chatId, media.file_id, common);
   },
-  sourceArchiveSender: async (chatId, message) => {
-    const common = { protect_content: true };
-    if (message.kind === "photo") return userBot.api.sendPhoto(chatId, message.file_id, common);
-    if (message.kind === "video") return userBot.api.sendVideo(chatId, message.file_id, common);
-    if (message.kind === "voice") return userBot.api.sendVoice(chatId, message.file_id, common);
-    if (message.kind === "video_note") return userBot.api.sendVideoNote(chatId, message.file_id, common);
-    if (message.kind === "document") return userBot.api.sendDocument(chatId, message.file_id, common);
-    if (message.kind === "sticker") return userBot.api.sendSticker(chatId, message.file_id, common);
-    if (message.kind === "animation") return userBot.api.sendAnimation(chatId, message.file_id, common);
+  sourceArchiveSender: async (chatId, message, sourceBrand = "anon", caption = null) => {
+    const sourceApi = sourceBrand === "anon" ? userBot.api : variantBotRegistry.get(sourceBrand)?.api;
+    if (!sourceApi) throw new Error("Unknown source bot for media archive");
+    const common = { protect_content: true, ...(caption ? { caption: caption.slice(0,1000) } : {}) };
+    if (message.kind === "photo") return sourceApi.sendPhoto(chatId, message.file_id, common);
+    if (message.kind === "video") return sourceApi.sendVideo(chatId, message.file_id, common);
+    if (message.kind === "voice") return sourceApi.sendVoice(chatId, message.file_id, common);
+    if (message.kind === "video_note") return sourceApi.sendVideoNote(chatId, message.file_id, { protect_content: true });
+    if (message.kind === "document") return sourceApi.sendDocument(chatId, message.file_id, common);
+    if (message.kind === "sticker") return sourceApi.sendSticker(chatId, message.file_id, { protect_content: true });
+    if (message.kind === "animation") return sourceApi.sendAnimation(chatId, message.file_id, common);
     return null;
   },
   sourcePaymentBalance: () => userBot.api.getMyStarBalance(),
@@ -103,7 +106,11 @@ const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
   sourcePaymentRefund: (userId, chargeId) => userBot.api.refundStarPayment(userId, chargeId),
   sourcePaymentMessage: (userId, text) => userBot.api.sendMessage(userId, text),
   sourcePaymentReconcile: () => userBot.reconcilePremium(),
-  sourceSessionNotifier: (userId, text) => userBot.api.sendMessage(userId, text, { reply_markup: menuKeyboard }),
+  sourceSessionNotifier: (userId, text, sourceBrand = "anon") => {
+    const api = sourceBrand === "anon" ? userBot.api : variantBotRegistry.get(sourceBrand)?.api;
+    if (!api) throw new Error("Unknown source bot for session notification");
+    return api.sendMessage(userId, text, { reply_markup: menuKeyboard });
+  },
   channelStatusProvider: () => channelPublisher?.status() || []
 });
 userBot.paymentAdminNotifier = (adminId, text) => adminBot.api.sendMessage(adminId, text);
@@ -119,6 +126,11 @@ const budgetBot = budgetToken ? (anonVariantsEnabled ? createAnonVariantBot("bud
 const hubBot = hubToken ? (anonVariantsEnabled ? createAnonVariantBot("hub", hubToken, process.env.ADMIN_IDS) : createToolsBot(hubToken, hubDbPath)) : null;
 const taskBot = taskToken ? (anonVariantsEnabled ? createAnonVariantBot("task", taskToken, process.env.ADMIN_IDS) : createPostBot(taskToken, taskDbPath)) : null;
 const quizBot = quizToken ? (anonVariantsEnabled ? createAnonVariantBot("quiz", quizToken, process.env.ADMIN_IDS) : createMediaBot(quizToken, quizDbPath)) : null;
+if (anonVariantsEnabled) {
+  for (const [id, instance] of [["english",englishBot],["focus",focusBot],["game",gameBot],["budget",budgetBot],["hub",hubBot],["task",taskBot],["quiz",quizBot],["party",partyBot]]) {
+    if (instance) variantBotRegistry.set(id, instance);
+  }
+}
 adminBot.startDailyReportScheduler();
 channelPublisher.start();
 
