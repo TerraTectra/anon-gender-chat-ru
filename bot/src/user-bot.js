@@ -159,6 +159,7 @@ export function postChatKeyboard(userId = null, botUsername = null, isVariant = 
   }
 
   if (isVariant) return keyboard.row().url("💬 Основной анонимный чат", "https://t.me/anon_gender_chat_ru_bot?start=src_variant_referral");
+  if (process.env.ANON_VARIANTS_ENABLED === "1") return keyboard;
   return keyboard
     .row()
     .url("📥 Скачать видео", "https://t.me/TectraQuizBot?start=src_anon_postchat_video")
@@ -169,7 +170,7 @@ export function createUserBot(token, dbPath, options = {}) {
   const store = options.store ?? new Store(dbPath, { sessionArchiveRoot: options.sessionArchiveRoot });
   const bot = new Bot(token, { client: telegramClientOptions() });
   installTelegramReliability(bot, { onForbidden: id => store.markBotBlocked(id) });
-  const { showPremium, showVisibility } = installPremium(bot, store, { adminIds: options.adminIds });
+  const { showPremium, showVisibility } = installPremium(bot, store, { adminIds: options.adminIds, disableSales: options.isVariant });
   let runner;
   let pollingStopping = false;
   bot.startConcurrent = async () => {
@@ -179,7 +180,7 @@ export function createUserBot(token, dbPath, options = {}) {
     await bot.api.deleteWebhook({ drop_pending_updates: false });
     if (pollingStopping) return;
     runner = run(bot, { sink: { concurrency: options.concurrency ?? 24 }, runner: { fetch: { timeout: 10, allowed_updates: ['message','callback_query','my_chat_member','pre_checkout_query'] }, maxRetryTime: 5 * 60_000, retryInterval: 'exponential', silent: true } });
-    bot.startPremiumReconciliation();
+    if (!options.isVariant) bot.startPremiumReconciliation();
     return runner.task();
   };
   bot.stopConcurrent = async () => { pollingStopping = true; if (runner) await runner.stop(); };
