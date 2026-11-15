@@ -64,6 +64,7 @@ const partyBot = partyToken ? (anonVariantsEnabled ? createAnonVariantBot("party
 let channelPublisher = null;
 const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
   sessionArchiveRoot,
+  anonVariantsEnabled,
   englishDbPath: englishToken && !anonVariantsEnabled ? englishDbPath : null,
   focusDbPath: focusToken && !anonVariantsEnabled ? focusDbPath : null,
   gameDbPath: gameToken && !anonVariantsEnabled ? gameDbPath : null,
