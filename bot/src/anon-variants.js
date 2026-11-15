@@ -117,13 +117,22 @@ export function createAnonVariantBot(id, token, adminIds) {
 export function anonVariantMetrics() {
   return anonVariants.map((brand) => {
     const file = anonVariantDbPath(brand.id);
-    const row = { id: brand.id, name: brand.name, username: brand.username, ready: false, users: 0, starts7: 0, active7: 0, matches7: 0, searching: 0, chatting: 0, reports7: 0 };
+    const row = { id: brand.id, name: brand.name, username: brand.username, ready: false, users: 0, starts7: 0, active7: 0, matches7: 0, searching: 0, chatting: 0, reports7: 0, d1: null, d7: null };
     if (!fs.existsSync(file)) return row;
     const db = new DatabaseSync(file, { readOnly: true });
     try {
       row.users = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
       row.starts7 = db.prepare("SELECT COUNT(*) AS n FROM events WHERE type='start' AND created_at >= datetime('now','-7 days')").get().n;
-      row.active7 = db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM events WHERE created_at >= datetime('now','-7 days')").get().n;
+      row.active7 = db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM user_activity_days WHERE activity_date >= date('now','+3 hours','-6 days')").get().n;
+      for (const [label, elapsed, from, to] of [
+        ["d1", 1, 14, 8], ["d7", 7, 21, 14]
+      ]) {
+        const data = db.prepare(
+          "SELECT COUNT(*) AS total, SUM(CASE WHEN EXISTS (SELECT 1 FROM user_activity_days a WHERE a.user_id=u.id AND a.activity_date=date(u.created_at,'+3 hours','+" + elapsed + " days')) THEN 1 ELSE 0 END) AS returned " +
+          "FROM users u WHERE date(u.created_at,'+3 hours') BETWEEN date('now','+3 hours','-" + from + " days') AND date('now','+3 hours','-" + to + " days')"
+        ).get();
+        row[label] = data.total ? Math.round((data.returned || 0) / data.total * 1000) / 10 : null;
+      }
       row.matches7 = db.prepare("SELECT COUNT(*) AS n FROM events WHERE type='match' AND created_at >= datetime('now','-7 days')").get().n;
       row.searching = db.prepare("SELECT COUNT(*) AS n FROM users WHERE state='searching'").get().n;
       row.chatting = db.prepare("SELECT COUNT(*) AS n FROM users WHERE partner_id IS NOT NULL").get().n / 2;
