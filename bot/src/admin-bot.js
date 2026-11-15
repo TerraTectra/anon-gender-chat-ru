@@ -14,6 +14,7 @@ import { products as catalogProducts } from "./products.js";
 import { safeErrorSummary } from "./safe-error.js";
 import { TaskStore } from "./task-store.js";
 import { Store } from "./store.js";
+import { anonVariantMetrics, banAcrossAnonVariants, pendingAnonVariantReports, reviewAnonVariantReport } from "./anon-variants.js";
 import { installPremiumAdmin } from "./premium-admin.js";
 import { installTelegramReliability, createSingleFlightRetry } from './telegram-reliability.js';
 
@@ -754,6 +755,31 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     await next();
   });
 
+  if (options.anonVariantsEnabled) {
+    bot.command("variants", async (ctx) => {
+      const all = anonVariantMetrics();
+      const total = all.reduce((sum, row) => sum + row.users, 0);
+      const details = all.map((row) => {
+        if (!row.ready) return row.name + ": ещё не запущен";
+        return row.name + ": " + row.users + " пользователей, стартов 7д " + row.starts7
+          + ", активны 7д " + row.active7 + ", совпадений 7д " + row.matches7
+          + ", ищут " + row.searching + ", жалоб 7д " + row.reports7;
+      });
+      await ctx.reply("Анонимные варианты, 90-дневный эксперимент\nВсего регистраций в вариантах: " + total
+        + "\n\n" + details.join("\n") + "\n\nЖалобы: /variant_reports");
+    });
+    bot.command("variant_reports", async (ctx) => {
+      const reports = pendingAnonVariantReports();
+      const rows = reports.map((row) => row.variantId + " #" + row.id + ": ID "
+        + row.reporter_id + " пожаловался на " + row.reported_id + " (" + row.created_at + ")");
+      await ctx.reply(rows.length ? rows.join("\n") + "\n\nЗакрыть проверенную: /variant_review ИД_варианта НОМЕР. Заблокировать во всей сети: /ban USER_ID." : "Новых жалоб от вариантов нет.");
+    });
+    bot.command("variant_review", async (ctx) => {
+      const parts = String(ctx.match || "").trim().split(/\s+/);
+      const ok = reviewAnonVariantReport(parts[0], Number(parts[1]));
+      await ctx.reply(ok ? "Жалоба отмечена рассмотренной." : "Формат: /variant_review english 123");
+    });
+  }
   installPremiumAdmin(bot, store, options);
   bot.command("start", (ctx) => ctx.reply(networkOverviewText(), { reply_markup: adminKeyboard }));
   bot.command("overview", (ctx) => ctx.reply(networkOverviewText(), { reply_markup: adminKeyboard }));
@@ -949,6 +975,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     gameStore?.banUser(userId);
     budgetStore?.banUser(userId);
     taskStore?.banUser(userId);
+    if (options.anonVariantsEnabled) banAcrossAnonVariants(userId, true);
     await ctx.reply(`Пользователь ${userId} заблокирован.`);
   });
 
@@ -961,6 +988,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     gameStore?.unbanUser(userId);
     budgetStore?.unbanUser(userId);
     taskStore?.unbanUser(userId);
+    if (options.anonVariantsEnabled) banAcrossAnonVariants(userId, false);
     await ctx.reply(`Пользователь ${userId} разблокирован.`);
   });
 
@@ -973,6 +1001,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     gameStore?.banUser(userId);
     budgetStore?.banUser(userId);
     taskStore?.banUser(userId);
+    if (options.anonVariantsEnabled) banAcrossAnonVariants(userId, true);
     store.reviewReport(reportId);
     await ctx.answerCallbackQuery("Пользователь заблокирован во всех ботах");
     await ctx.editMessageText(`Жалоба #${reportId}: пользователь ${userId} заблокирован.`);
@@ -995,6 +1024,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     gameStore?.banUser(userId);
     budgetStore?.banUser(userId);
     taskStore?.banUser(userId);
+    if (options.anonVariantsEnabled) banAcrossAnonVariants(userId, true);
     await ctx.answerCallbackQuery("Пользователь заблокирован во всех ботах");
     await ctx.editMessageText(`English Talk Match, жалоба #${reportId}: пользователь ${userId} заблокирован.`);
   });
@@ -1016,6 +1046,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     focusStore?.banUser(userId);
     budgetStore?.banUser(userId);
     taskStore?.banUser(userId);
+    if (options.anonVariantsEnabled) banAcrossAnonVariants(userId, true);
     await ctx.answerCallbackQuery("Пользователь заблокирован во всех ботах");
     await ctx.editMessageText(`Game Mate, жалоба #${reportId}: пользователь ${userId} заблокирован.`);
   });
