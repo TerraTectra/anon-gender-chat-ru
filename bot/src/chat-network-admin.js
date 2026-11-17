@@ -463,6 +463,7 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
   });
 
   return { dashboard, viewList, viewAllSessions, timeline,
+    products: () => BRANDS.map(item => [item.name, store(item.id)]),
     close() { for (const [id, st] of stores) if (id !== "anon") st.close(); }
   };
 }
