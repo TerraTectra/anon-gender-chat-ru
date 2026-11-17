@@ -1,8 +1,10 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { InputFile, InlineKeyboard } from "grammy";
 import { Store } from "./store.js";
 import { anonVariants, anonVariantDbPath } from "./anon-variants.js";
+import { aggregateNetworkSessions, collectClearableArchiveIds, NETWORK_SESSION_PAGE_SIZE } from "./chat-network-session-list.js";
 
 const PAGE_SIZE = 8;
 const TIMELINE_SIZE = 8;
@@ -49,14 +51,28 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
   const brand = id => BRANDS.find(item => item.id === id);
   const store = id => stores.get(id);
   const privateChat = ctx => ctx.chat?.type === "private";
+  const sources = BRANDS.map(item => ({ id: item.id, store: stores.get(item.id) }));
+  const pendingArchiveClear = new Map();
+  const sourceKind = kind => kind.endsWith("a") ? "a" : "m";
+  const globalKind = kind => kind.startsWith("g");
+  const listCallback = (id, kind, page) => globalKind(kind)
+    ? "multi_all:" + sourceKind(kind) + ":" + page
+    : "multi_list:" + id + ":" + kind + ":" + page;
+  function expireArchiveClearRequests() {
+    for (const [key, request] of pendingArchiveClear) {
+      if (Date.now() > request.expiresAt) pendingArchiveClear.delete(key);
+    }
+  }
   const replyKeyboard = id => new InlineKeyboard()
     .text("💬 Активные", "multi_list:" + id + ":a:0")
     .text("🗂 Архив", "multi_list:" + id + ":m:0").row()
     .text("← Все чаты", "multi_home");
 
   function allKeyboard() {
-    const keyboard = new InlineKeyboard();
-    BRANDS.forEach((b,i)=>{ if(i) keyboard.row(); keyboard.text(b.name,"multi_brand:"+b.id); });
+    const keyboard = new InlineKeyboard()
+      .text("🟢 Все активные сессии", "multi_all:a:0")
+      .text("🗂 Общий архив", "multi_all:m:0").row();
+    BRANDS.forEach(b => keyboard.text(b.name, "multi_brand:" + b.id).row());
     return keyboard;
   }
 
@@ -84,6 +100,51 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
       + "Всего пользователей: " + stats.users + "\nИщут: " + stats.searching
       + "\nАктивных пар: " + stats.chatting + "\nНовых жалоб: " + stats.reports,
       { reply_markup: replyKeyboard(id) });
+  }
+
+  function globalListKeyboard(result, kind, page) {
+    const keyboard = new InlineKeyboard();
+    for (const session of result.items) {
+      const source = brand(session.brandId);
+      const marker = kind === "a" ? "🟢" : Number(session.is_favorite) ? "⭐" : "🗂";
+      const compact = source.name.replace(" — анонимный чат", "").replace(" — анонимно", "");
+      keyboard.text(marker + " " + compact + " #" + session.id + " · " + (session.message_count || 0) + " сообщ.",
+        "multi_session:" + session.brandId + ":" + session.id + ":g" + kind + ":" + page).row();
+    }
+    if (page > 0) keyboard.text("← Ранее", "multi_all:" + kind + ":" + (page - 1));
+    if ((page + 1) * NETWORK_SESSION_PAGE_SIZE < result.total)
+      keyboard.text("Далее →", "multi_all:" + kind + ":" + (page + 1));
+    if (kind === "m" && result.total > 0) {
+      keyboard.row().text("🧹 Очистить архив без избранного", "multi_clear_prepare");
+    }
+    keyboard.row().text("← Все боты", "multi_home");
+    return keyboard;
+  }
+
+  async function viewAllSessions(ctx, kind, page = 0, edit = true) {
+    if (!privateChat(ctx)) return ctx.reply("Журнал доступен только в личном чате.");
+    page = validPage(page);
+    // Clamp deep pages to avoid quadratic scans caused by stale or malicious callbacks.
+    if (page * NETWORK_SESSION_PAGE_SIZE > 5000) {
+      if (ctx.answerCallbackQuery) return ctx.answerCallbackQuery({ text: "Слишком глубокая страница", show_alert: true });
+      return ctx.reply("Достигнут предел просмотра. Используйте список конкретного бота.");
+    }
+    for (const source of sources) source.store.purgeExpiredChatSessions();
+    const result = aggregateNetworkSessions(sources, kind, {
+      limit: NETWORK_SESSION_PAGE_SIZE, offset: page * NETWORK_SESSION_PAGE_SIZE
+    });
+    const heading = kind === "a" ? "🟢 Все активные сессии" : "🗂 Общий архив завершённых сессий";
+    const lines = result.items.map(session => {
+      const source = brand(session.brandId);
+      const timestamp = kind === "a" ? session.last_activity_at_ms : (session.ended_at_ms || session.last_activity_at_ms);
+      return source.name + " · #" + session.id + " · " + (session.message_count || 0)
+        + " сообщ. · " + dateLabel(timestamp);
+    });
+    const message = heading + "\nБотов: " + BRANDS.length + " · всего сессий: " + result.total
+      + "\nСтраница: " + (page + 1) + "\n\n" + (lines.join("\n") || "Сессий пока нет.");
+    const keyboard = globalListKeyboard(result, kind, page);
+    if (edit) return ctx.editMessageText(message, { reply_markup: keyboard });
+    return ctx.reply(message, { reply_markup: keyboard });
   }
 
   function listKeyboard(id, kind, result, page) {
@@ -118,16 +179,18 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
   function sessionKeyboard(id, session, kind, page) {
     const keyboard = new InlineKeyboard();
     if (Number(session.message_count || 0) > 0)
-      keyboard.text("📖 Переписка по порядку", "multi_timeline:" + id + ":" + session.id + ":0").row();
+      keyboard.text("📖 Переписка по порядку", "multi_timeline:" + id + ":" + session.id + ":0:" + kind + ":" + page).row();
     if (Number(session.media_count || 0) > 0)
       keyboard.text(Number(session.is_favorite) ? "☆ Убрать избранное" : "⭐ В избранное",
         "multi_favorite:" + id + ":" + session.id + ":" + (Number(session.is_favorite) ? 0 : 1)
         + ":" + kind + ":" + page).row();
+    keyboard.text(session.status === "active" ? "🗑 Удалить активную сессию" : "🗑 Удалить архив этой сессии",
+      "multi_delete:" + id + ":" + session.id + ":" + kind + ":" + page).row();
     session.participants.forEach((user, index) => {
       keyboard.text("⛔ Бан участника " + (index + 1) + " · " + user.id,
         "multi_ban:" + id + ":" + session.id + ":" + index + ":" + kind + ":" + page).row();
     });
-    return keyboard.text("← Список", "multi_list:" + id + ":" + kind + ":" + page);
+    return keyboard.text("← Список", listCallback(id, kind, page));
   }
 
   async function viewSession(ctx, id, sessionId, kind, page) {
@@ -137,7 +200,7 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     const session = st.getChatSession(sessionId);
     if (!session) return ctx.answerCallbackQuery({ text: "Сессия недоступна", show_alert: true });
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(brand(id).name + "\n\n" + sessionInfo(session), {
+    await ctx.editMessageText(brand(id).name + "\n@" + brand(id).username + "\n\n" + sessionInfo(session), {
       reply_markup: sessionKeyboard(id, session, kind, page)
     });
   }
@@ -160,7 +223,7 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     return options.sourceArchiveSender(chatId, msg, id, caption);
   }
 
-  async function timeline(ctx, id, sessionId, offset = 0) {
+  async function timeline(ctx, id, sessionId, offset = 0, returnKind = "m", returnPage = 0) {
     if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
     const st = store(id), session = st.getChatSession(sessionId);
     offset = validPage(offset);
@@ -201,33 +264,185 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     if (offset > 0) keyboard.text("← Ранее", "multi_timeline:" + id + ":" + sessionId + ":" + Math.max(0, offset - TIMELINE_SIZE));
     if (offset + result.items.length < result.total)
       keyboard.text("Далее →", "multi_timeline:" + id + ":" + sessionId + ":" + (offset + result.items.length));
-    keyboard.row().text("← К сессии", "multi_session:" + id + ":" + sessionId + ":m:0");
+    keyboard.row().text("← К сессии", "multi_session:" + id + ":" + sessionId + ":" + returnKind + ":" + returnPage);
     await ctx.reply("Просмотр " + (offset + 1) + "–" + (offset + result.items.length) + " из " + result.total,
       { protect_content: true, reply_markup: keyboard });
+  }
+
+
+  async function askDeleteSession(ctx, id, sessionId, kind, page) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const st = store(id);
+    const session = st?.getChatSession(sessionId);
+    if (!session) return ctx.answerCallbackQuery({ text: "Сессия уже удалена", show_alert: true });
+    await ctx.answerCallbackQuery();
+    const active = session.status === "active";
+    const warning = active
+      ? "Сейчас идёт разговор. Он будет завершён для обоих участников."
+      : "Все сообщения и сохранённые локальные вложения будут удалены безвозвратно.";
+    const favorite = Number(session.is_favorite) ? "\nВНИМАНИЕ: сессия добавлена в избранное." : "";
+    const keyboard = new InlineKeyboard()
+      .text("🗑 Да, удалить безвозвратно", "multi_delete_confirm:" + id + ":" + sessionId + ":" + kind + ":" + page).row()
+      .text("Отмена", "multi_session:" + id + ":" + sessionId + ":" + kind + ":" + page);
+    return ctx.editMessageText("Удалить сессию #" + sessionId + " из " + brand(id).name
+      + "?\n" + warning + favorite, { reply_markup: keyboard });
+  }
+
+  async function confirmDeleteSession(ctx, id, sessionId, kind, page) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const st = store(id);
+    if (!st || !st.getChatSession(sessionId)) {
+      return ctx.answerCallbackQuery({ text: "Сессия уже удалена", show_alert: true });
+    }
+    await ctx.answerCallbackQuery("Удаляю сессию");
+    const removed = st.deleteChatSession(sessionId);
+    if (!removed) return ctx.editMessageText("Сессия уже удалена.");
+    if (removed.status === "active" && options.sourceSessionNotifier) {
+      for (const userId of removed.userIds || []) {
+        try {
+          await options.sourceSessionNotifier(userId, "Ваш чат завершён администрацией.", id);
+        } catch (error) {
+          console.error("Unable to notify session participant", String(error?.code || "unknown"));
+        }
+      }
+    }
+    return ctx.editMessageText(brand(id).name + " · сессия #" + sessionId
+      + "\nПереписка и сохранённые локальные вложения удалены.", {
+      reply_markup: new InlineKeyboard().text("← К списку", listCallback(id, kind, page))
+    });
+  }
+
+  function archiveClearRequest(ctx, token, stage) {
+    const request = pendingArchiveClear.get(token);
+    if (!request || Date.now() > request.expiresAt
+      || request.ownerId !== ctx.from?.id || request.stage !== stage) return null;
+    return request;
+  }
+
+  async function requestArchiveClear(ctx) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    await ctx.answerCallbackQuery();
+    expireArchiveClearRequests();
+    let items;
+    try {
+      items = collectClearableArchiveIds(sources);
+    } catch (error) {
+      return ctx.editMessageText("Массовая очистка недоступна: слишком много сессий. Удаляйте их по отдельности.", {
+        reply_markup: new InlineKeyboard().text("← Общий архив", "multi_all:m:0")
+      });
+    }
+    if (!items.length) return ctx.editMessageText("В архиве нет завершённых сессий для массового удаления. Избранное защищено.", {
+      reply_markup: new InlineKeyboard().text("← Общий архив", "multi_all:m:0")
+    });
+    const token = crypto.randomBytes(8).toString("hex");
+    pendingArchiveClear.set(token, {
+      ownerId: ctx.from?.id, expiresAt: Date.now() + 120_000,
+      stage: 1, items
+    });
+    return ctx.editMessageText("Очистить общий архив всех девяти чатов?\n\n"
+      + "Будет удалено завершённых сессий: " + items.length + ".\n"
+      + "Избранные и активные сессии сохранятся.\n"
+      + "Удаление переписок и файлов необратимо.\n\n"
+      + "Подтверждение действительно две минуты.", {
+      reply_markup: new InlineKeyboard()
+        .text("Продолжить к подтверждению", "multi_clear_stage2:" + token).row()
+        .text("Отмена", "multi_all:m:0")
+    });
+  }
+
+  async function confirmArchiveClearStage(ctx, token) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const request = archiveClearRequest(ctx, token, 1);
+    if (!request) return ctx.answerCallbackQuery({ text: "Подтверждение истекло", show_alert: true });
+    request.stage = 2;
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText("Последнее подтверждение.\n"
+      + "Удалить " + request.items.length + " завершённых не избранных сессий из всех чатов?\n"
+      + "Вернуть переписки и файлы после удаления будет невозможно.", {
+      reply_markup: new InlineKeyboard()
+        .text("🗑 Удалить " + request.items.length + " сессий", "multi_clear_execute:" + token).row()
+        .text("Отмена", "multi_all:m:0")
+    });
+  }
+
+  async function executeArchiveClear(ctx, token) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const request = archiveClearRequest(ctx, token, 2);
+    if (!request) return ctx.answerCallbackQuery({ text: "Подтверждение истекло", show_alert: true });
+    pendingArchiveClear.delete(token); // prevents accidental duplicate processing
+    await ctx.answerCallbackQuery("Очищаю архив");
+    let deleted = 0, skipped = 0;
+    for (const [index, item] of request.items.entries()) {
+      const st = store(item.brandId);
+      const session = st?.getChatSession(item.sessionId);
+      if (session?.status === "ended" && !Number(session.is_favorite)) {
+        try {
+          if (st.deleteChatSession(item.sessionId)) deleted += 1;
+          else skipped += 1;
+        } catch (error) {
+          skipped += 1;
+          console.error("Archive cleanup failed for one session", item.brandId, String(error?.code || "unknown"));
+        }
+      } else skipped += 1;
+      if (index % 20 === 19) await new Promise(resolve => setImmediate(resolve));
+    }
+    return ctx.editMessageText("Общий архив очищен.\nУдалено сессий: " + deleted
+      + "\nПропущено или защищено: " + skipped
+      + "\nИзбранное и активные разговоры сохранены.", {
+      reply_markup: new InlineKeyboard().text("← Общий архив", "multi_all:m:0")
+    });
+  }
+
+  async function showAllReports(ctx) {
+    if (!privateChat(ctx)) return ctx.reply("Жалобы доступны только в личном чате с админ-ботом.");
+    const reports = [];
+    for (const item of BRANDS) {
+      const rows = store(item.id).recentReports(10);
+      for (const report of rows) reports.push({ ...report, brandId: item.id });
+    }
+    reports.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || b.id - a.id);
+    if (!reports.length) return ctx.reply("Новых жалоб во всех девяти чатах нет.", { protect_content: true });
+    await ctx.reply("🚩 Жалобы из всех чатов · последние " + Math.min(reports.length, 15)
+      + "\nВсего найдено (до 10 на бот): " + reports.length, { protect_content: true });
+    for (const report of reports.slice(0, 15)) {
+      const keyboard = new InlineKeyboard()
+        .text("⛔ Бан в этом боте", "multi_report_ban:" + report.brandId + ":" + report.id + ":" + report.reported_id)
+        .text("✓ Рассмотрено", "multi_report_review:" + report.brandId + ":" + report.id);
+      await ctx.reply(brand(report.brandId).name + " · жалоба #" + report.id
+        + "\nОт ID " + report.reporter_id + " на ID " + report.reported_id
+        + "\n" + (report.created_at || "время неизвестно"), {
+        protect_content: true, reply_markup: keyboard
+      });
+    }
   }
 
   bot.command("chats", ctx => dashboard(ctx));
   bot.hears("💬 Все чаты", ctx => dashboard(ctx));
   bot.callbackQuery("multi_home", async ctx => { await ctx.answerCallbackQuery(); await dashboard(ctx, true); });
+  bot.callbackQuery(/^multi_all:(a|m):(\d+)$/, async ctx => {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    await ctx.answerCallbackQuery();
+    await viewAllSessions(ctx, ctx.match[1], Number(ctx.match[2]), true);
+  });
   bot.callbackQuery(new RegExp("^multi_brand:" + IDS + "$"), ctx => viewBrand(ctx, ctx.match[1]));
   bot.callbackQuery(new RegExp("^multi_list:" + IDS + ":(a|m):(\\d+)$"), async ctx => {
     await ctx.answerCallbackQuery();
     await viewList(ctx, ctx.match[1], ctx.match[2], Number(ctx.match[3]));
   });
-  bot.callbackQuery(new RegExp("^multi_session:" + IDS + ":(\\d+):(a|m):(\\d+)$"),
+  bot.callbackQuery(new RegExp("^multi_session:" + IDS + ":(\\d+):(a|m|ga|gm):(\\d+)$"),
     ctx => viewSession(ctx, ctx.match[1], Number(ctx.match[2]), ctx.match[3], Number(ctx.match[4])));
-  bot.callbackQuery(new RegExp("^multi_timeline:" + IDS + ":(\\d+):(\\d+)$"),
-    ctx => timeline(ctx, ctx.match[1], Number(ctx.match[2]), Number(ctx.match[3])));
-  bot.callbackQuery(new RegExp("^multi_favorite:" + IDS + ":(\\d+):(0|1):(a|m):(\\d+)$"), async ctx => {
+  bot.callbackQuery(new RegExp("^multi_timeline:" + IDS + ":(\\d+):(\\d+)(?::(a|m|ga|gm):(\\d+))?$"),
+    ctx => timeline(ctx, ctx.match[1], Number(ctx.match[2]), Number(ctx.match[3]), ctx.match[4] || "m", Number(ctx.match[5] || 0)));
+  bot.callbackQuery(new RegExp("^multi_favorite:" + IDS + ":(\\d+):(0|1):(a|m|ga|gm):(\\d+)$"), async ctx => {
     if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
     const id=ctx.match[1], st=store(id), session=st.setChatSessionFavorite(Number(ctx.match[2]),ctx.match[3]==="1");
     if(!session)return ctx.answerCallbackQuery({text:"Сессия недоступна",show_alert:true});
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(brand(id).name + "\n\n" + sessionInfo(session), {
+    await ctx.editMessageText(brand(id).name + "\n@" + brand(id).username + "\n\n" + sessionInfo(session), {
       reply_markup: sessionKeyboard(id,session,ctx.match[4],Number(ctx.match[5]))
     });
   });
-  bot.callbackQuery(new RegExp("^multi_ban:" + IDS + ":(\\d+):([01]):(a|m):(\\d+)$"), async ctx => {
+  bot.callbackQuery(new RegExp("^multi_ban:" + IDS + ":(\\d+):([01]):(a|m|ga|gm):(\\d+)$"), async ctx => {
     if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
     const id=ctx.match[1], session=store(id).getChatSession(Number(ctx.match[2]));
     const person=session?.participants[Number(ctx.match[3])];
@@ -254,6 +469,36 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
       + ".\nДругие боты не затронуты.\nРазблокировка: /unban_chat " + id + " " + person.id,
       {reply_markup:new InlineKeyboard().text("← Все чаты","multi_home")});
   });
+  bot.callbackQuery(new RegExp("^multi_delete:" + IDS + ":(\\d+):(a|m|ga|gm):(\\d+)$"), ctx =>
+    askDeleteSession(ctx, ctx.match[1], Number(ctx.match[2]), ctx.match[3], Number(ctx.match[4])));
+  bot.callbackQuery(new RegExp("^multi_delete_confirm:" + IDS + ":(\\d+):(a|m|ga|gm):(\\d+)$"), ctx =>
+    confirmDeleteSession(ctx, ctx.match[1], Number(ctx.match[2]), ctx.match[3], Number(ctx.match[4])));
+  bot.callbackQuery("multi_clear_prepare", requestArchiveClear);
+  bot.callbackQuery(/^multi_clear_stage2:([0-9a-f]{16})$/, ctx => confirmArchiveClearStage(ctx, ctx.match[1]));
+  bot.callbackQuery(/^multi_clear_execute:([0-9a-f]{16})$/, ctx => executeArchiveClear(ctx, ctx.match[1]));
+
+  bot.callbackQuery(new RegExp("^multi_report_ban:" + IDS + ":(\\d+):(\\d+)$"), async ctx => {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const id = ctx.match[1], reportId = Number(ctx.match[2]), userId = Number(ctx.match[3]);
+    if (!Number.isSafeInteger(userId) || userId <= 0) return ctx.answerCallbackQuery({ text: "Некорректный ID", show_alert: true });
+    const report = store(id).recentReports(50).find(item => Number(item.id) === reportId);
+    if (!report || Number(report.reported_id) !== userId) {
+      return ctx.answerCallbackQuery({ text: "Жалоба уже рассмотрена или устарела", show_alert: true });
+    }
+    store(id).banUser(userId);
+    store(id).reviewReport(reportId);
+    await ctx.answerCallbackQuery("Пользователь заблокирован в этом боте");
+    return ctx.editMessageText(brand(id).name + " · жалоба #" + reportId
+      + "\nID " + userId + " заблокирован только в выбранном боте.");
+  });
+  bot.callbackQuery(new RegExp("^multi_report_review:" + IDS + ":(\\d+)$"), async ctx => {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const id = ctx.match[1], reportId = Number(ctx.match[2]);
+    store(id).reviewReport(reportId);
+    await ctx.answerCallbackQuery("Жалоба рассмотрена");
+    return ctx.editMessageText(brand(id).name + " · жалоба #" + reportId + "\nЗакрыта без блокировки.");
+  });
+
   bot.command("unban_chat",async ctx => {
     if (!privateChat(ctx)) return ctx.reply("Только в личном чате.");
     const [id,rawId]=String(ctx.match||"").trim().split(/\s+/), st=store(id), userId=Number(rawId);
@@ -262,7 +507,8 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     await ctx.reply("Разблокирован ID " + userId + " в " + brand(id).name);
   });
 
-  return { dashboard, viewList, timeline,
+  return { dashboard, viewList, viewAllSessions, timeline, showAllReports,
+    products: () => BRANDS.map(item => [item.name, store(item.id)]),
     close() { for (const [id, st] of stores) if (id !== "anon") st.close(); }
   };
 }

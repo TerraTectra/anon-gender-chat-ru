@@ -258,7 +258,28 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     .row()
     .text("← Все боты", "admin_products");
 
+  function experimentRows() {
+    return anonVariantMetrics().filter(row => row.ready);
+  }
+
+  function experimentOverviewText() {
+    const original = store.stats();
+    const variants = experimentRows();
+    const totalRegistrations = original.users + variants.reduce((sum, row) => sum + row.users, 0);
+    const chatting = original.chatting + variants.reduce((sum, row) => sum + row.chatting, 0);
+    const searching = original.searching + variants.reduce((sum, row) => sum + row.searching, 0);
+    const reports = original.reports + variants.reduce((sum, row) => sum + row.pendingReports, 0);
+    return "TerraTectra Admin Hub · анонимные чаты\n\n"
+      + "Подключено ботов: " + (1 + variants.length) + " из 9\n"
+      + "Регистраций по всем ботам: " + totalRegistrations + " (возможны повторы)\n"
+      + "Сейчас общаются пар: " + chatting + "\n"
+      + "Ожидают собеседника: " + searching + "\n"
+      + "Жалобы на проверке: " + reports + "\n\n"
+      + "Откройте «💬 Все чаты» для общей статистики и сессий.";
+  }
+
   function networkOverviewText() {
+    if (options.anonVariantsEnabled) return experimentOverviewText();
     const chat = store.stats();
     const english = englishStore?.stats();
     const focus = focusStore?.stats();
@@ -354,6 +375,21 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   }
 
   function dailyReportText() {
+    if (options.anonVariantsEnabled) {
+      const original = store.growthStats();
+      const bots = experimentRows();
+      const sum = name => bots.reduce((total, row) => total + (Number(row[name]) || 0), 0);
+      const date = moscowTimeParts().date.split("-").reverse().join(".");
+      const names = bots.map(row => row.name + ": +" + row.new7 + ", пар " + row.matches7);
+      return "TerraTectra · отчёт за " + date + "\n\n"
+        + "Чатов в сети: " + (bots.length + 1) + "\n"
+        + "Новые пользователи сегодня: " + ((original.newToday || 0) + sum("newToday")) + "\n"
+        + "Новые за 7 дней: " + ((original.new7 || 0) + sum("new7")) + "\n"
+        + "Совпадения за 7 дней: " + ((original.matches7 || 0) + sum("matches7")) + "\n"
+        + "Активны в новых ботах за 7 дней: " + sum("active7") + " (с повторами)\n"
+        + "Жалоб ожидают проверки: " + (store.stats().reports + sum("pendingReports")) + "\n\n"
+        + "По брендам за неделю:\n" + names.join("\n");
+    }
     const products = [
       ["Анонимный чат", store],
       ["English Talk Match", englishStore],
@@ -436,6 +472,17 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   };
 
   function allStatsText() {
+    if (options.anonVariantsEnabled) {
+      const rows = experimentRows();
+      const parts = ["Основной чат\n" + statsText(store.stats())];
+      for (const row of rows) {
+        parts.push(row.name + "\nРегистраций: " + row.users
+          + "\nАктивны 7 дней: " + row.active7
+          + "\nИщут: " + row.searching + "\nОбщаются пар: " + row.chatting
+          + "\nНовых жалоб: " + row.pendingReports);
+      }
+      return parts.join("\n\n");
+    }
     const parts = [`Анонимный чат\n${statsText(store.stats())}`];
     if (englishStore) parts.push(`English Talk Match\n${statsText(englishStore.stats())}`);
     if (focusStore) {
@@ -471,6 +518,19 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   }
 
   function allGrowthText() {
+    if (options.anonVariantsEnabled) {
+      const original = store.growthStats();
+      const parts = [pairGrowthText("Основной чат", original)];
+      for (const row of experimentRows()) {
+        parts.push(row.name + "\nСтарты 7д: " + row.starts7
+          + "\nАктивны 7д: " + row.active7
+          + "\nСовпадения 7д: " + row.matches7
+          + "\nD1: " + (row.d1 === null ? "—" : row.d1 + "%")
+          + " · D7: " + (row.d7 === null ? "—" : row.d7 + "%")
+          + "\nЖалобы 7д: " + row.reports7);
+      }
+      return "Рост сети анонимных чатов · 7 дней\n\n" + parts.join("\n\n");
+    }
     const parts = [pairGrowthText("Анонимный чат", store.growthStats())];
     if (englishStore) parts.push(pairGrowthText("English Talk Match", englishStore.growthStats()));
     if (gameStore) parts.push(pairGrowthText("Game Mate", gameStore.growthStats()));
@@ -499,7 +559,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   }
 
   function allSourcesText() {
-    const products = [
+    const products = options.anonVariantsEnabled && networkAdmin ? networkAdmin.products() : [
       ["Анонимный чат", store],
       ["English Talk Match", englishStore],
       ["Focus Sprint", focusStore],
@@ -519,7 +579,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   }
 
   function campaignStatsText() {
-    const products = [
+    const products = options.anonVariantsEnabled && networkAdmin ? networkAdmin.products() : [
       ["Анонимный чат", store],
       ["English Talk Match", englishStore],
       ["Focus Sprint", focusStore],
@@ -807,14 +867,16 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(productStatsText(ctx.match[1]), { reply_markup: productKeyboard });
   });
-  bot.command("sessions", (ctx) => networkAdmin ? networkAdmin.viewList(ctx, "anon", "a", 0, false) : showSessionList(ctx, "a"));
-  bot.command("media_sessions", (ctx) => networkAdmin ? networkAdmin.viewList(ctx, "anon", "m", 0, false) : showSessionList(ctx, "m"));
+  bot.command("sessions", (ctx) => networkAdmin ? networkAdmin.viewAllSessions(ctx, "a", 0, false) : showSessionList(ctx, "a"));
+  bot.command("media_sessions", (ctx) => networkAdmin ? networkAdmin.viewAllSessions(ctx, "m", 0, false) : showSessionList(ctx, "m"));
   bot.callbackQuery(/^anon_sessions:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
+    if (networkAdmin) return networkAdmin.viewAllSessions(ctx, "a", Number(ctx.match[1]), true);
     await showSessionList(ctx, "a", Number(ctx.match[1]), true);
   });
   bot.callbackQuery(/^anon_retained:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
+    if (networkAdmin) return networkAdmin.viewAllSessions(ctx, "m", Number(ctx.match[1]), true);
     await showSessionList(ctx, "m", Number(ctx.match[1]), true);
   });
   bot.callbackQuery(/^anon_session:(\d+):(a|m):(\d+)$/, async (ctx) => {
@@ -964,6 +1026,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   }
 
   async function sendReports(ctx) {
+    if (networkAdmin) return networkAdmin.showAllReports(ctx);
     let count = await sendReportsForStore(ctx, store, "Анонимный чат", "admin");
     if (englishStore) count += await sendReportsForStore(ctx, englishStore, "English Talk Match", "english_admin");
     if (gameStore) count += await sendReportsForStore(ctx, gameStore, "Game Mate", "game_admin");
