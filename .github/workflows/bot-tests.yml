@@ -1,0 +1,41 @@
+name: Anonymous chat bot tests
+
+on:
+  push:
+    branches:
+      - feature/unified-chat-history-deletion-20261117
+  pull_request:
+    branches:
+      - production/migrated-home-20260905
+    paths:
+      - "bot/**"
+      - ".github/workflows/bot-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Check changed modules
+        run: |
+          node --check src/chat-network-session-list.js
+          node --check src/chat-network-admin.js
+          node --check src/admin-bot.js
+          node --check src/chat-session-archive.js
+          node --check src/anon-variants.js
+      - name: Run automated tests
+        run: npm test
