@@ -125,7 +125,7 @@ export function createAnonVariantBot(id, token, adminIds) {
 export function anonVariantMetrics() {
   return anonVariants.map((brand) => {
     const file = anonVariantDbPath(brand.id);
-    const row = { id: brand.id, name: brand.name, username: brand.username, ready: false, users: 0, starts7: 0, active7: 0, matches7: 0, searching: 0, chatting: 0, reports7: 0, d1: null, d7: null };
+    const row = { id: brand.id, name: brand.name, username: brand.username, ready: false, users: 0, starts7: 0, active7: 0, matches7: 0, searching: 0, chatting: 0, reports7: 0, pendingReports: 0, d1: null, d7: null };
     if (!fs.existsSync(file)) return row;
     const db = new DatabaseSync(file, { readOnly: true });
     try {
@@ -145,6 +145,7 @@ export function anonVariantMetrics() {
       row.searching = db.prepare("SELECT COUNT(*) AS n FROM users WHERE state='searching'").get().n;
       row.chatting = db.prepare("SELECT COUNT(*) AS n FROM users WHERE partner_id IS NOT NULL").get().n / 2;
       row.reports7 = db.prepare("SELECT COUNT(*) AS n FROM reports WHERE created_at >= datetime('now','-7 days')").get().n;
+      row.pendingReports = db.prepare("SELECT COUNT(*) AS n FROM reports WHERE reviewed_at IS NULL").get().n;
       row.ready = true;
     } finally {
       db.close();
