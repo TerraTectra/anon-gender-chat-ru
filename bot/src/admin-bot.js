@@ -1026,6 +1026,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   }
 
   async function sendReports(ctx) {
+    if (networkAdmin) return networkAdmin.showAllReports(ctx);
     let count = await sendReportsForStore(ctx, store, "Анонимный чат", "admin");
     if (englishStore) count += await sendReportsForStore(ctx, englishStore, "English Talk Match", "english_admin");
     if (gameStore) count += await sendReportsForStore(ctx, gameStore, "Game Mate", "game_admin");
