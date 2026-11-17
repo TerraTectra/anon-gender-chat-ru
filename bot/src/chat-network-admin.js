@@ -393,6 +393,29 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     });
   }
 
+  async function showAllReports(ctx) {
+    if (!privateChat(ctx)) return ctx.reply("Жалобы доступны только в личном чате с админ-ботом.");
+    const reports = [];
+    for (const item of BRANDS) {
+      const rows = store(item.id).recentReports(10);
+      for (const report of rows) reports.push({ ...report, brandId: item.id });
+    }
+    reports.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || b.id - a.id);
+    if (!reports.length) return ctx.reply("Новых жалоб во всех девяти чатах нет.", { protect_content: true });
+    await ctx.reply("🚩 Жалобы из всех чатов · последние " + Math.min(reports.length, 15)
+      + "\nВсего найдено (до 10 на бот): " + reports.length, { protect_content: true });
+    for (const report of reports.slice(0, 15)) {
+      const keyboard = new InlineKeyboard()
+        .text("⛔ Бан в этом боте", "multi_report_ban:" + report.brandId + ":" + report.id + ":" + report.reported_id)
+        .text("✓ Рассмотрено", "multi_report_review:" + report.brandId + ":" + report.id);
+      await ctx.reply(brand(report.brandId).name + " · жалоба #" + report.id
+        + "\nОт ID " + report.reporter_id + " на ID " + report.reported_id
+        + "\n" + (report.created_at || "время неизвестно"), {
+        protect_content: true, reply_markup: keyboard
+      });
+    }
+  }
+
   bot.command("chats", ctx => dashboard(ctx));
   bot.hears("💬 Все чаты", ctx => dashboard(ctx));
   bot.callbackQuery("multi_home", async ctx => { await ctx.answerCallbackQuery(); await dashboard(ctx, true); });
@@ -454,6 +477,28 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
   bot.callbackQuery(/^multi_clear_stage2:([0-9a-f]{16})$/, ctx => confirmArchiveClearStage(ctx, ctx.match[1]));
   bot.callbackQuery(/^multi_clear_execute:([0-9a-f]{16})$/, ctx => executeArchiveClear(ctx, ctx.match[1]));
 
+  bot.callbackQuery(new RegExp("^multi_report_ban:" + IDS + ":(\\d+):(\\d+)$"), async ctx => {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const id = ctx.match[1], reportId = Number(ctx.match[2]), userId = Number(ctx.match[3]);
+    if (!Number.isSafeInteger(userId) || userId <= 0) return ctx.answerCallbackQuery({ text: "Некорректный ID", show_alert: true });
+    const report = store(id).recentReports(50).find(item => Number(item.id) === reportId);
+    if (!report || Number(report.reported_id) !== userId) {
+      return ctx.answerCallbackQuery({ text: "Жалоба уже рассмотрена или устарела", show_alert: true });
+    }
+    store(id).banUser(userId);
+    store(id).reviewReport(reportId);
+    await ctx.answerCallbackQuery("Пользователь заблокирован в этом боте");
+    return ctx.editMessageText(brand(id).name + " · жалоба #" + reportId
+      + "\nID " + userId + " заблокирован только в выбранном боте.");
+  });
+  bot.callbackQuery(new RegExp("^multi_report_review:" + IDS + ":(\\d+)$"), async ctx => {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const id = ctx.match[1], reportId = Number(ctx.match[2]);
+    store(id).reviewReport(reportId);
+    await ctx.answerCallbackQuery("Жалоба рассмотрена");
+    return ctx.editMessageText(brand(id).name + " · жалоба #" + reportId + "\nЗакрыта без блокировки.");
+  });
+
   bot.command("unban_chat",async ctx => {
     if (!privateChat(ctx)) return ctx.reply("Только в личном чате.");
     const [id,rawId]=String(ctx.match||"").trim().split(/\s+/), st=store(id), userId=Number(rawId);
@@ -462,7 +507,7 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     await ctx.reply("Разблокирован ID " + userId + " в " + brand(id).name);
   });
 
-  return { dashboard, viewList, viewAllSessions, timeline,
+  return { dashboard, viewList, viewAllSessions, timeline, showAllReports,
     products: () => BRANDS.map(item => [item.name, store(item.id)]),
     close() { for (const [id, st] of stores) if (id !== "anon") st.close(); }
   };
