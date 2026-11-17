@@ -45,7 +45,7 @@ test("single admin entry, chronological mixed chat transcript, and per-bot sessi
       chat: { type: "private", id: 90000 },
       reply: async (text, options) => {
         assert.match(text, /Все анонимные чаты \(9\)/);
-        assert.equal(options.reply_markup.inline_keyboard.length, 10);
+        assert.equal(options.reply_markup.inline_keyboard.flat().filter(button => button.callback_data?.startsWith("multi_brand:")).length, 9);
         assert.ok(options.reply_markup.inline_keyboard[0].some(button => button.callback_data === "multi_all:a:0"));
         assert.ok(options.reply_markup.inline_keyboard[0].some(button => button.callback_data === "multi_all:m:0"));
       }
