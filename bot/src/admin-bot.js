@@ -375,6 +375,21 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   }
 
   function dailyReportText() {
+    if (options.anonVariantsEnabled) {
+      const original = store.growthStats();
+      const bots = experimentRows();
+      const sum = name => bots.reduce((total, row) => total + (Number(row[name]) || 0), 0);
+      const date = moscowTimeParts().date.split("-").reverse().join(".");
+      const names = bots.map(row => row.name + ": +" + row.new7 + ", пар " + row.matches7);
+      return "TerraTectra · отчёт за " + date + "\n\n"
+        + "Чатов в сети: " + (bots.length + 1) + "\n"
+        + "Новые пользователи сегодня: " + ((original.newToday || 0) + sum("newToday")) + "\n"
+        + "Новые за 7 дней: " + ((original.new7 || 0) + sum("new7")) + "\n"
+        + "Совпадения за 7 дней: " + ((original.matches7 || 0) + sum("matches7")) + "\n"
+        + "Активны в новых ботах за 7 дней: " + sum("active7") + " (с повторами)\n"
+        + "Жалоб ожидают проверки: " + (store.stats().reports + sum("pendingReports")) + "\n\n"
+        + "По брендам за неделю:\n" + names.join("\n");
+    }
     const products = [
       ["Анонимный чат", store],
       ["English Talk Match", englishStore],
