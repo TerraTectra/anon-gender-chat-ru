@@ -134,6 +134,20 @@ test('a refund payload cannot revoke a different order with the same buyer',()=>
  assert.equal(store.premium.active(1),true);
 }));
 
+test('restoring an expired old purchase never extends a separate recent purchase across a gap',()=>fixture(async({store,order,bot,setLedger})=>{
+ const now=Date.now(),old=order('week',now-30*DAY_MS);
+ store.premium.approve(1,123456,old.p,now-30*DAY_MS);
+ const recent=order('week',now);store.premium.approve(1,123456,recent.p,now);
+ store.premium.applyPayment(1,123456,recent.p,now);
+ const expected=store.premium.until(1);
+ setLedger([{id:old.p.telegram_payment_charge_id,date:Math.floor((now-30*DAY_MS)/1000),amount:old.o.stars,source:{type:'user',transaction_type:'invoice_payment',user:{id:1},invoice_payload:old.p.invoice_payload}}]);
+ assert.equal((await bot.reconcilePremium()).restored,1);
+ assert.equal(store.premium.until(1),expected);
+ assert.equal(store.premium.recentPayments().length,2);
+ store.premium.refund(recent.p.telegram_payment_charge_id,1,now+1000);
+ assert.equal(store.premium.active(1),false);
+}));
+
 test('experiment terms fit Telegram, disclose caps, scope and adult-only sales',()=>fixture(async({store})=>{
  const text=premiumTerms(store.premium,{adultOnly:true,brandName:'Искра'});
  assert.ok(text.length<3500);assert.match(text,/только с 18/);assert.match(text,/18 000/);assert.match(text,/365/);assert.match(text,/только в этом боте/);

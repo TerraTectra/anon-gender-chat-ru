@@ -35,6 +35,12 @@ export class PremiumStore {
   if(this.options.maxPrepaidDays&&Math.max(0,this.until(userId)-now)+days*DAY_MS>this.options.maxPrepaidDays*DAY_MS)throw new Error('prepaid_limit');
  }
  until(id){return Number(this.db.prepare('SELECT until_ms FROM premium_access WHERE user_id=?').get(id)?.until_ms||0);}
+ recalculate(userId){
+  let until=0;
+  for(const row of this.db.prepare('SELECT paid_ms,days FROM premium_payments WHERE user_id=? AND refunded_ms IS NULL ORDER BY paid_ms,rowid').all(userId))until=Math.max(until,row.paid_ms)+row.days*DAY_MS;
+  this.db.prepare('INSERT INTO premium_access VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET until_ms=excluded.until_ms').run(userId,until);
+  return until;
+ }
  active(id,now=Date.now()){return this.until(id)>now;}
  visibility(id){const r=this.db.prepare('SELECT visible FROM profile_visibility WHERE user_id=?').get(id);return r?Boolean(r.visible):null;}
  setVisibility(id,visible,now=Date.now()){this.db.prepare('INSERT INTO profile_visibility VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET visible=excluded.visible,decided_ms=excluded.decided_ms').run(id,visible?1:0,now);}
@@ -101,8 +107,7 @@ export class PremiumStore {
     this.db.exec('COMMIT');return {duplicate:false,refunded:true,until:this.until(userId),order};
    }
    this.db.prepare("UPDATE premium_orders SET state='paid' WHERE id=?").run(order.id);
-   const until=Math.max(now,this.until(userId))+order.days*DAY_MS;
-   this.db.prepare('INSERT INTO premium_access VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET until_ms=excluded.until_ms').run(userId,until);
+   const until=this.recalculate(userId);
    this.db.exec('COMMIT');return {duplicate:false,refunded:false,until,order};
   }catch(error){this.db.exec('ROLLBACK');throw error;}
  }
@@ -130,9 +135,7 @@ export class PremiumStore {
    if(!p.refunded_ms){
     this.db.prepare('UPDATE premium_payments SET refunded_ms=? WHERE charge_id=?').run(now,chargeId);
     this.db.prepare("UPDATE premium_orders SET state='refunded' WHERE id=?").run(p.order_id);
-    let until=0;
-    for(const row of this.db.prepare('SELECT * FROM premium_payments WHERE user_id=? AND refunded_ms IS NULL ORDER BY paid_ms,rowid').all(userId))until=Math.max(until,row.paid_ms)+row.days*DAY_MS;
-    this.db.prepare('INSERT INTO premium_access VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET until_ms=excluded.until_ms').run(userId,until);
+    this.recalculate(userId);
    }
    this.db.exec('COMMIT');return {duplicate:Boolean(p.refunded_ms),until:this.until(userId)};
   }catch(error){this.db.exec('ROLLBACK');throw error;}
