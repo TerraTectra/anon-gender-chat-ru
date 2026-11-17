@@ -27,12 +27,12 @@ test("single admin entry, chronological mixed chat transcript, and per-bot sessi
         emitted.push({ kind: "media", caption, fileId: message.file_id });
       }
     });
-    const send = async (data, method = "callback") => {
-      const handler = handlers.find(item => item.matcher instanceof RegExp && item.matcher.test(data));
+    const send = async (data) => {
+      const handler = handlers.find(item => item.matcher === data || (item.matcher instanceof RegExp && item.matcher.test(data)));
       assert.ok(handler, "Callback exists: " + data);
-      const match = data.match(handler.matcher);
+      const match = handler.matcher instanceof RegExp ? data.match(handler.matcher) : data;
       const ctx = {
-        match, chat: { type: "private", id: 90000 },
+        match, chat: { type: "private", id: 90000 }, from: { id: 90000 },
         answerCallbackQuery: async () => {},
         editMessageText: async (text, options) => emitted.push({ kind: "edit", text, options }),
         reply: async (text, options) => emitted.push({ kind: "text", text, options }),
@@ -45,7 +45,9 @@ test("single admin entry, chronological mixed chat transcript, and per-bot sessi
       chat: { type: "private", id: 90000 },
       reply: async (text, options) => {
         assert.match(text, /Все анонимные чаты \(9\)/);
-        assert.equal(options.reply_markup.inline_keyboard.length, 9);
+        assert.equal(options.reply_markup.inline_keyboard.length, 10);
+        assert.ok(options.reply_markup.inline_keyboard[0].some(button => button.callback_data === "multi_all:a:0"));
+        assert.ok(options.reply_markup.inline_keyboard[0].some(button => button.callback_data === "multi_all:m:0"));
       }
     });
     const archiveRoot = path.join(root, "data", "anon-variants", "session-archive", "english");
@@ -70,14 +72,19 @@ test("single admin entry, chronological mixed chat transcript, and per-bot sessi
     assert.match(sequence[2].text,/После фото/);
     assert.match(sequence[3].text,/Просмотр 1–3 из 3/);
 
-    await send("multi_session:english:1:a:0");
+    await send("multi_all:a:0");
+    assert.match(emitted.at(-1).text, /Все активные сессии/);
+    assert.match(emitted.at(-1).text, /Искра/);
+    await send("multi_session:english:1:ga:0");
+    assert.match(emitted.at(-1).text, /@EnglishTalkMatchBot/);
     const detail = emitted.at(-1);
     assert.equal(detail.kind,"edit");
     const buttons = detail.options.reply_markup.inline_keyboard.flat().map(b=>b.text);
     assert.ok(buttons.some(text=>text.includes("Бан участника 1")));
     assert.ok(buttons.some(text=>text.includes("Бан участника 2")));
+    assert.ok(buttons.some(text=>text.includes("Удалить активную сессию")));
 
-    await send("multi_ban:english:1:0:a:0");
+    await send("multi_ban:english:1:0:ga:0");
     assert.match(emitted.at(-1).text,/Заблокировать @alice/);
     assert.equal(guest.isBanned(111),false);
     await send("multi_ban_confirm:english:1:0");
