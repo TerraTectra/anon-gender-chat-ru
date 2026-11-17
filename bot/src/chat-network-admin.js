@@ -1,8 +1,10 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { InputFile, InlineKeyboard } from "grammy";
 import { Store } from "./store.js";
 import { anonVariants, anonVariantDbPath } from "./anon-variants.js";
+import { aggregateNetworkSessions, collectClearableArchiveIds, NETWORK_SESSION_PAGE_SIZE } from "./chat-network-session-list.js";
 
 const PAGE_SIZE = 8;
 const TIMELINE_SIZE = 8;
@@ -49,14 +51,28 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
   const brand = id => BRANDS.find(item => item.id === id);
   const store = id => stores.get(id);
   const privateChat = ctx => ctx.chat?.type === "private";
+  const sources = BRANDS.map(item => ({ id: item.id, store: stores.get(item.id) }));
+  const pendingArchiveClear = new Map();
+  const sourceKind = kind => kind.endsWith("a") ? "a" : "m";
+  const globalKind = kind => kind.startsWith("g");
+  const listCallback = (id, kind, page) => globalKind(kind)
+    ? "multi_all:" + sourceKind(kind) + ":" + page
+    : "multi_list:" + id + ":" + kind + ":" + page;
+  function expireArchiveClearRequests() {
+    for (const [key, request] of pendingArchiveClear) {
+      if (Date.now() > request.expiresAt) pendingArchiveClear.delete(key);
+    }
+  }
   const replyKeyboard = id => new InlineKeyboard()
     .text("💬 Активные", "multi_list:" + id + ":a:0")
     .text("🗂 Архив", "multi_list:" + id + ":m:0").row()
     .text("← Все чаты", "multi_home");
 
   function allKeyboard() {
-    const keyboard = new InlineKeyboard();
-    BRANDS.forEach((b,i)=>{ if(i) keyboard.row(); keyboard.text(b.name,"multi_brand:"+b.id); });
+    const keyboard = new InlineKeyboard()
+      .text("🟢 Все активные сессии", "multi_all:a:0")
+      .text("🗂 Общий архив", "multi_all:m:0").row();
+    BRANDS.forEach(b => keyboard.text(b.name, "multi_brand:" + b.id).row());
     return keyboard;
   }
 
@@ -84,6 +100,51 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
       + "Всего пользователей: " + stats.users + "\nИщут: " + stats.searching
       + "\nАктивных пар: " + stats.chatting + "\nНовых жалоб: " + stats.reports,
       { reply_markup: replyKeyboard(id) });
+  }
+
+  function globalListKeyboard(result, kind, page) {
+    const keyboard = new InlineKeyboard();
+    for (const session of result.items) {
+      const source = brand(session.brandId);
+      const marker = kind === "a" ? "🟢" : Number(session.is_favorite) ? "⭐" : "🗂";
+      const compact = source.name.replace(" — анонимный чат", "").replace(" — анонимно", "");
+      keyboard.text(marker + " " + compact + " #" + session.id + " · " + (session.message_count || 0) + " сообщ.",
+        "multi_session:" + session.brandId + ":" + session.id + ":g" + kind + ":" + page).row();
+    }
+    if (page > 0) keyboard.text("← Ранее", "multi_all:" + kind + ":" + (page - 1));
+    if ((page + 1) * NETWORK_SESSION_PAGE_SIZE < result.total)
+      keyboard.text("Далее →", "multi_all:" + kind + ":" + (page + 1));
+    if (kind === "m" && result.total > 0) {
+      keyboard.row().text("🧹 Очистить архив без избранного", "multi_clear_prepare");
+    }
+    keyboard.row().text("← Все боты", "multi_home");
+    return keyboard;
+  }
+
+  async function viewAllSessions(ctx, kind, page = 0, edit = true) {
+    if (!privateChat(ctx)) return ctx.reply("Журнал доступен только в личном чате.");
+    page = validPage(page);
+    // Clamp deep pages to avoid quadratic scans caused by stale or malicious callbacks.
+    if (page * NETWORK_SESSION_PAGE_SIZE > 5000) {
+      if (ctx.answerCallbackQuery) return ctx.answerCallbackQuery({ text: "Слишком глубокая страница", show_alert: true });
+      return ctx.reply("Достигнут предел просмотра. Используйте список конкретного бота.");
+    }
+    for (const source of sources) source.store.purgeExpiredChatSessions();
+    const result = aggregateNetworkSessions(sources, kind, {
+      limit: NETWORK_SESSION_PAGE_SIZE, offset: page * NETWORK_SESSION_PAGE_SIZE
+    });
+    const heading = kind === "a" ? "🟢 Все активные сессии" : "🗂 Общий архив завершённых сессий";
+    const lines = result.items.map(session => {
+      const source = brand(session.brandId);
+      const timestamp = kind === "a" ? session.last_activity_at_ms : (session.ended_at_ms || session.last_activity_at_ms);
+      return source.name + " · #" + session.id + " · " + (session.message_count || 0)
+        + " сообщ. · " + dateLabel(timestamp);
+    });
+    const message = heading + "\nБотов: " + BRANDS.length + " · всего сессий: " + result.total
+      + "\nСтраница: " + (page + 1) + "\n\n" + (lines.join("\n") || "Сессий пока нет.");
+    const keyboard = globalListKeyboard(result, kind, page);
+    if (edit) return ctx.editMessageText(message, { reply_markup: keyboard });
+    return ctx.reply(message, { reply_markup: keyboard });
   }
 
   function listKeyboard(id, kind, result, page) {
