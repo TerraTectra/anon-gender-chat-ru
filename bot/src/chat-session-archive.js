@@ -556,10 +556,11 @@ export class ChatSessionArchive {
     return { items, total, limit: safeLimit, offset: safeOffset };
   }
 
-  listRetained({ limit = 10, offset = 0, now = Date.now() } = {}) {
+  listRetained({ limit = 10, offset = 0, now = Date.now(), onlyEnded = false } = {}) {
     const safeLimit = boundedPageValue(limit, 10, 1, 50);
     const safeOffset = boundedPageValue(offset, 0, 0, 1_000_000);
-    const visible = "s.media_count > ? AND (s.status = 'active' OR s.is_favorite = 1 OR s.expires_at_ms > ?)";
+    const visible = "s.media_count > ? AND (s.status = 'active' OR s.is_favorite = 1 OR s.expires_at_ms > ?)"
+      + (onlyEnded ? " AND s.status = 'ended'" : "");
     const total = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM chat_sessions s WHERE ${visible}`)
       .get(MEDIA_RETENTION_THRESHOLD, now).count);
     const items = this.db.prepare(`${this.#sessionSelect(visible)}
