@@ -807,14 +807,16 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(productStatsText(ctx.match[1]), { reply_markup: productKeyboard });
   });
-  bot.command("sessions", (ctx) => networkAdmin ? networkAdmin.viewList(ctx, "anon", "a", 0, false) : showSessionList(ctx, "a"));
-  bot.command("media_sessions", (ctx) => networkAdmin ? networkAdmin.viewList(ctx, "anon", "m", 0, false) : showSessionList(ctx, "m"));
+  bot.command("sessions", (ctx) => networkAdmin ? networkAdmin.viewAllSessions(ctx, "a", 0, false) : showSessionList(ctx, "a"));
+  bot.command("media_sessions", (ctx) => networkAdmin ? networkAdmin.viewAllSessions(ctx, "m", 0, false) : showSessionList(ctx, "m"));
   bot.callbackQuery(/^anon_sessions:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
+    if (networkAdmin) return networkAdmin.viewAllSessions(ctx, "a", Number(ctx.match[1]), true);
     await showSessionList(ctx, "a", Number(ctx.match[1]), true);
   });
   bot.callbackQuery(/^anon_retained:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
+    if (networkAdmin) return networkAdmin.viewAllSessions(ctx, "m", Number(ctx.match[1]), true);
     await showSessionList(ctx, "m", Number(ctx.match[1]), true);
   });
   bot.callbackQuery(/^anon_session:(\d+):(a|m):(\d+)$/, async (ctx) => {
