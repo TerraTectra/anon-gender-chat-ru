@@ -179,16 +179,18 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
   function sessionKeyboard(id, session, kind, page) {
     const keyboard = new InlineKeyboard();
     if (Number(session.message_count || 0) > 0)
-      keyboard.text("📖 Переписка по порядку", "multi_timeline:" + id + ":" + session.id + ":0").row();
+      keyboard.text("📖 Переписка по порядку", "multi_timeline:" + id + ":" + session.id + ":0:" + kind + ":" + page).row();
     if (Number(session.media_count || 0) > 0)
       keyboard.text(Number(session.is_favorite) ? "☆ Убрать избранное" : "⭐ В избранное",
         "multi_favorite:" + id + ":" + session.id + ":" + (Number(session.is_favorite) ? 0 : 1)
         + ":" + kind + ":" + page).row();
+    keyboard.text(session.status === "active" ? "🗑 Удалить активную сессию" : "🗑 Удалить архив этой сессии",
+      "multi_delete:" + id + ":" + session.id + ":" + kind + ":" + page).row();
     session.participants.forEach((user, index) => {
       keyboard.text("⛔ Бан участника " + (index + 1) + " · " + user.id,
         "multi_ban:" + id + ":" + session.id + ":" + index + ":" + kind + ":" + page).row();
     });
-    return keyboard.text("← Список", "multi_list:" + id + ":" + kind + ":" + page);
+    return keyboard.text("← Список", listCallback(id, kind, page));
   }
 
   async function viewSession(ctx, id, sessionId, kind, page) {
@@ -198,7 +200,7 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     const session = st.getChatSession(sessionId);
     if (!session) return ctx.answerCallbackQuery({ text: "Сессия недоступна", show_alert: true });
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(brand(id).name + "\n\n" + sessionInfo(session), {
+    await ctx.editMessageText(brand(id).name + "\n@" + brand(id).username + "\n\n" + sessionInfo(session), {
       reply_markup: sessionKeyboard(id, session, kind, page)
     });
   }
@@ -221,7 +223,7 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     return options.sourceArchiveSender(chatId, msg, id, caption);
   }
 
-  async function timeline(ctx, id, sessionId, offset = 0) {
+  async function timeline(ctx, id, sessionId, offset = 0, returnKind = "m", returnPage = 0) {
     if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
     const st = store(id), session = st.getChatSession(sessionId);
     offset = validPage(offset);
@@ -262,7 +264,7 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     if (offset > 0) keyboard.text("← Ранее", "multi_timeline:" + id + ":" + sessionId + ":" + Math.max(0, offset - TIMELINE_SIZE));
     if (offset + result.items.length < result.total)
       keyboard.text("Далее →", "multi_timeline:" + id + ":" + sessionId + ":" + (offset + result.items.length));
-    keyboard.row().text("← К сессии", "multi_session:" + id + ":" + sessionId + ":m:0");
+    keyboard.row().text("← К сессии", "multi_session:" + id + ":" + sessionId + ":" + returnKind + ":" + returnPage);
     await ctx.reply("Просмотр " + (offset + 1) + "–" + (offset + result.items.length) + " из " + result.total,
       { protect_content: true, reply_markup: keyboard });
   }
@@ -270,25 +272,30 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
   bot.command("chats", ctx => dashboard(ctx));
   bot.hears("💬 Все чаты", ctx => dashboard(ctx));
   bot.callbackQuery("multi_home", async ctx => { await ctx.answerCallbackQuery(); await dashboard(ctx, true); });
+  bot.callbackQuery(/^multi_all:(a|m):(\d+)$/, async ctx => {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    await ctx.answerCallbackQuery();
+    await viewAllSessions(ctx, ctx.match[1], Number(ctx.match[2]), true);
+  });
   bot.callbackQuery(new RegExp("^multi_brand:" + IDS + "$"), ctx => viewBrand(ctx, ctx.match[1]));
   bot.callbackQuery(new RegExp("^multi_list:" + IDS + ":(a|m):(\\d+)$"), async ctx => {
     await ctx.answerCallbackQuery();
     await viewList(ctx, ctx.match[1], ctx.match[2], Number(ctx.match[3]));
   });
-  bot.callbackQuery(new RegExp("^multi_session:" + IDS + ":(\\d+):(a|m):(\\d+)$"),
+  bot.callbackQuery(new RegExp("^multi_session:" + IDS + ":(\\d+):(a|m|ga|gm):(\\d+)$"),
     ctx => viewSession(ctx, ctx.match[1], Number(ctx.match[2]), ctx.match[3], Number(ctx.match[4])));
-  bot.callbackQuery(new RegExp("^multi_timeline:" + IDS + ":(\\d+):(\\d+)$"),
-    ctx => timeline(ctx, ctx.match[1], Number(ctx.match[2]), Number(ctx.match[3])));
-  bot.callbackQuery(new RegExp("^multi_favorite:" + IDS + ":(\\d+):(0|1):(a|m):(\\d+)$"), async ctx => {
+  bot.callbackQuery(new RegExp("^multi_timeline:" + IDS + ":(\\d+):(\\d+)(?::(a|m|ga|gm):(\\d+))?$"),
+    ctx => timeline(ctx, ctx.match[1], Number(ctx.match[2]), Number(ctx.match[3]), ctx.match[4] || "m", Number(ctx.match[5] || 0)));
+  bot.callbackQuery(new RegExp("^multi_favorite:" + IDS + ":(\\d+):(0|1):(a|m|ga|gm):(\\d+)$"), async ctx => {
     if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
     const id=ctx.match[1], st=store(id), session=st.setChatSessionFavorite(Number(ctx.match[2]),ctx.match[3]==="1");
     if(!session)return ctx.answerCallbackQuery({text:"Сессия недоступна",show_alert:true});
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(brand(id).name + "\n\n" + sessionInfo(session), {
+    await ctx.editMessageText(brand(id).name + "\n@" + brand(id).username + "\n\n" + sessionInfo(session), {
       reply_markup: sessionKeyboard(id,session,ctx.match[4],Number(ctx.match[5]))
     });
   });
-  bot.callbackQuery(new RegExp("^multi_ban:" + IDS + ":(\\d+):([01]):(a|m):(\\d+)$"), async ctx => {
+  bot.callbackQuery(new RegExp("^multi_ban:" + IDS + ":(\\d+):([01]):(a|m|ga|gm):(\\d+)$"), async ctx => {
     if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
     const id=ctx.match[1], session=store(id).getChatSession(Number(ctx.match[2]));
     const person=session?.participants[Number(ctx.match[3])];
@@ -323,7 +330,7 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     await ctx.reply("Разблокирован ID " + userId + " в " + brand(id).name);
   });
 
-  return { dashboard, viewList, timeline,
+  return { dashboard, viewList, viewAllSessions, timeline,
     close() { for (const [id, st] of stores) if (id !== "anon") st.close(); }
   };
 }
