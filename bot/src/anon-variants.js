@@ -125,11 +125,13 @@ export function createAnonVariantBot(id, token, adminIds) {
 export function anonVariantMetrics() {
   return anonVariants.map((brand) => {
     const file = anonVariantDbPath(brand.id);
-    const row = { id: brand.id, name: brand.name, username: brand.username, ready: false, users: 0, starts7: 0, active7: 0, matches7: 0, searching: 0, chatting: 0, reports7: 0, pendingReports: 0, d1: null, d7: null };
+    const row = { id: brand.id, name: brand.name, username: brand.username, ready: false, users: 0, newToday: 0, new7: 0, starts7: 0, active7: 0, matches7: 0, searching: 0, chatting: 0, reports7: 0, pendingReports: 0, d1: null, d7: null };
     if (!fs.existsSync(file)) return row;
     const db = new DatabaseSync(file, { readOnly: true });
     try {
       row.users = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
+      row.newToday = db.prepare("SELECT COUNT(*) AS n FROM users WHERE date(created_at, '+3 hours') = date('now', '+3 hours')").get().n;
+      row.new7 = db.prepare("SELECT COUNT(*) AS n FROM users WHERE created_at >= datetime('now', '-7 days')").get().n;
       row.starts7 = db.prepare("SELECT COUNT(*) AS n FROM events WHERE type='start' AND created_at >= datetime('now','-7 days')").get().n;
       row.active7 = db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM user_activity_days WHERE activity_date >= date('now','+3 hours','-6 days')").get().n;
       for (const [label, elapsed, from, to] of [
