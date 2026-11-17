@@ -97,7 +97,7 @@ test("admin can delete one archived session and bulk-clear the rest without affe
       const db = new DatabaseSync(path.join(archiveRoot, "sessions.sqlite"));
       try {
         const t = Date.now();
-        const statement = db.prepare("INSERT INTO chat_sessions (user_a_id,user_b_id,status,started_at_ms,last_activity_at_ms,ended_at_ms,media_count,expires_at_ms,is_favorite) VALUES (101,202,'ended',?,?,?,?,1,?,?)");
+        const statement = db.prepare("INSERT INTO chat_sessions (user_a_id,user_b_id,status,started_at_ms,last_activity_at_ms,ended_at_ms,media_count,expires_at_ms,is_favorite) VALUES (101,202,'ended',?,?,?,1,?,?)");
         statement.run(t-8000,t-7000,t-7000,t+60_000,0);
         statement.run(t-6000,t-5000,t-5000,t+60_000,1);
         statement.run(t-4000,t-3000,t-3000,t+60_000,0);
