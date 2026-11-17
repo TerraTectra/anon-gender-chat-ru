@@ -258,7 +258,28 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     .row()
     .text("← Все боты", "admin_products");
 
+  function experimentRows() {
+    return anonVariantMetrics().filter(row => row.ready);
+  }
+
+  function experimentOverviewText() {
+    const original = store.stats();
+    const variants = experimentRows();
+    const totalRegistrations = original.users + variants.reduce((sum, row) => sum + row.users, 0);
+    const chatting = original.chatting + variants.reduce((sum, row) => sum + row.chatting, 0);
+    const searching = original.searching + variants.reduce((sum, row) => sum + row.searching, 0);
+    const reports = original.reports + variants.reduce((sum, row) => sum + row.pendingReports, 0);
+    return "TerraTectra Admin Hub · анонимные чаты\n\n"
+      + "Подключено ботов: " + (1 + variants.length) + " из 9\n"
+      + "Регистраций по всем ботам: " + totalRegistrations + " (возможны повторы)\n"
+      + "Сейчас общаются пар: " + chatting + "\n"
+      + "Ожидают собеседника: " + searching + "\n"
+      + "Жалобы на проверке: " + reports + "\n\n"
+      + "Откройте «💬 Все чаты» для общей статистики и сессий.";
+  }
+
   function networkOverviewText() {
+    if (options.anonVariantsEnabled) return experimentOverviewText();
     const chat = store.stats();
     const english = englishStore?.stats();
     const focus = focusStore?.stats();
@@ -436,6 +457,17 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   };
 
   function allStatsText() {
+    if (options.anonVariantsEnabled) {
+      const rows = experimentRows();
+      const parts = ["Основной чат\n" + statsText(store.stats())];
+      for (const row of rows) {
+        parts.push(row.name + "\nРегистраций: " + row.users
+          + "\nАктивны 7 дней: " + row.active7
+          + "\nИщут: " + row.searching + "\nОбщаются пар: " + row.chatting
+          + "\nНовых жалоб: " + row.pendingReports);
+      }
+      return parts.join("\n\n");
+    }
     const parts = [`Анонимный чат\n${statsText(store.stats())}`];
     if (englishStore) parts.push(`English Talk Match\n${statsText(englishStore.stats())}`);
     if (focusStore) {
@@ -471,6 +503,19 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   }
 
   function allGrowthText() {
+    if (options.anonVariantsEnabled) {
+      const original = store.growthStats();
+      const parts = [pairGrowthText("Основной чат", original)];
+      for (const row of experimentRows()) {
+        parts.push(row.name + "\nСтарты 7д: " + row.starts7
+          + "\nАктивны 7д: " + row.active7
+          + "\nСовпадения 7д: " + row.matches7
+          + "\nD1: " + (row.d1 === null ? "—" : row.d1 + "%")
+          + " · D7: " + (row.d7 === null ? "—" : row.d7 + "%")
+          + "\nЖалобы 7д: " + row.reports7);
+      }
+      return "Рост сети анонимных чатов · 7 дней\n\n" + parts.join("\n\n");
+    }
     const parts = [pairGrowthText("Анонимный чат", store.growthStats())];
     if (englishStore) parts.push(pairGrowthText("English Talk Match", englishStore.growthStats()));
     if (gameStore) parts.push(pairGrowthText("Game Mate", gameStore.growthStats()));
@@ -499,7 +544,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   }
 
   function allSourcesText() {
-    const products = [
+    const products = options.anonVariantsEnabled && networkAdmin ? networkAdmin.products() : [
       ["Анонимный чат", store],
       ["English Talk Match", englishStore],
       ["Focus Sprint", focusStore],
@@ -519,7 +564,7 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   }
 
   function campaignStatsText() {
-    const products = [
+    const products = options.anonVariantsEnabled && networkAdmin ? networkAdmin.products() : [
       ["Анонимный чат", store],
       ["English Talk Match", englishStore],
       ["Focus Sprint", focusStore],
