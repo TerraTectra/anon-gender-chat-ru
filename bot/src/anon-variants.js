@@ -6,6 +6,7 @@ import { InputFile } from "grammy";
 import { createUserBot } from "./user-bot.js";
 import { Store } from "./store.js";
 import { ensureVariantAvatar } from "./avatar-generator.js";
+import { paymentConfiguration, variantSalesEnabled } from './premium-pricing.js';
 
 export const anonVariants = Object.freeze([
   {
@@ -89,6 +90,7 @@ export function createAnonVariantBot(id, token, adminIds) {
   if (!brand) throw new Error("Unknown variant: " + id);
   const bot = createUserBot(token, anonVariantDbPath(id), {
     brandId: id, brandName: brand.name, isVariant: true, concurrency: 4,
+    paymentConfig: paymentConfiguration(id), salesEnabled: variantSalesEnabled(id),
     sessionArchiveRoot: path.resolve("./data/anon-variants/session-archive/" + id),
     adminIds
   });
@@ -104,7 +106,10 @@ export function createAnonVariantBot(id, token, adminIds) {
         { command: "filters", description: "Поиск с фильтрами" },
         { command: "stop", description: "Завершить разговор" },
         { command: "report", description: "Пожаловаться" },
-        { command: "privacy", description: "Приватность и хранение данных" }
+        { command: "privacy", description: "Приватность и хранение данных" },
+        { command: "premium", description: "Тарифы в Telegram Stars (18+)" },
+        { command: "terms", description: "Условия premium и возвратов" },
+        { command: "paysupport", description: "Помощь с оплатой и возвратами" }
       ])
     ];
     const results = await Promise.allSettled(calls);

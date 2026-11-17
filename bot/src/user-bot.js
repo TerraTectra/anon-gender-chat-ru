@@ -167,10 +167,14 @@ export function postChatKeyboard(userId = null, botUsername = null, isVariant = 
 }
 
 export function createUserBot(token, dbPath, options = {}) {
-  const store = options.store ?? new Store(dbPath, { sessionArchiveRoot: options.sessionArchiveRoot });
+  const store = options.store ?? new Store(dbPath, { sessionArchiveRoot: options.sessionArchiveRoot, premiumOptions: options.paymentConfig });
+  if (options.store && options.paymentConfig) store.premium.configure(options.paymentConfig);
   const bot = new Bot(token, { client: telegramClientOptions() });
   installTelegramReliability(bot, { onForbidden: id => store.markBotBlocked(id) });
-  const { showPremium, showVisibility } = installPremium(bot, store, { adminIds: options.adminIds, disableSales: options.isVariant });
+  const { showPremium, showVisibility } = installPremium(bot, store, {
+    adminIds: options.adminIds, disableSales: options.isVariant && !options.salesEnabled,
+    brandId: options.brandId, brandName: options.brandName, adultOnly: options.paymentConfig?.adultOnly
+  });
   let runner;
   let pollingStopping = false;
   bot.startConcurrent = async () => {
@@ -180,7 +184,7 @@ export function createUserBot(token, dbPath, options = {}) {
     await bot.api.deleteWebhook({ drop_pending_updates: false });
     if (pollingStopping) return;
     runner = run(bot, { sink: { concurrency: options.concurrency ?? 24 }, runner: { fetch: { timeout: 10, allowed_updates: ['message','callback_query','my_chat_member','pre_checkout_query'] }, maxRetryTime: 5 * 60_000, retryInterval: 'exponential', silent: true } });
-    if (!options.isVariant) bot.startPremiumReconciliation();
+    bot.startPremiumReconciliation();
     return runner.task();
   };
   bot.stopConcurrent = async () => { pollingStopping = true; if (runner) await runner.stop(); };

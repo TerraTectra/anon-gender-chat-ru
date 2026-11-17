@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/unified-chat-history-deletion-20261117
+      - feature/stars-multibrand-20261117
   pull_request:
     branches:
       - production/migrated-home-20260905
@@ -37,5 +38,11 @@ jobs:
           node --check src/admin-bot.js
           node --check src/chat-session-archive.js
           node --check src/anon-variants.js
+          node --check src/premium-pricing.js
+          node --check src/premium-store.js
+          node --check src/premium-bot.js
+          node --check src/network-payment-admin.js
+          node --check src/payment-admin-panel.js
+          node --check src/index.js
       - name: Run automated tests
         run: npm test

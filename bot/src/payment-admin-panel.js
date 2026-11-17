@@ -58,6 +58,9 @@ export function adminPaymentDetail(payment) {
 
 export function installPaymentAdminPanel(bot, store, options = {}) {
   const premium = store.premium;
+  const prefix = options.paymentPrefix || '';
+  const route = data => prefix + data;
+  const matcher = source => new RegExp('^' + prefix + source + '$');
   const refunding = new Set(), confirmations = new Map();
   const privateOnly = async ctx => {
     if (ctx.chat?.type === 'private') return true;
@@ -65,6 +68,11 @@ export function installPaymentAdminPanel(bot, store, options = {}) {
     return false;
   };
   async function deliver(ctx, view, edit = false) {
+    if (prefix || options.paymentNetwork) {
+      view = { ...view, reply_markup: { inline_keyboard: (view.reply_markup?.inline_keyboard || []).map(row => row.map(button => ({ ...button, ...(button.callback_data ? { callback_data: route(button.callback_data) } : {}) }))) } };
+      view.reply_markup.inline_keyboard.push([{ text: '← Платежи всех ботов', callback_data: 'payments:network' }]);
+    }
+    if (options.paymentName) view = { ...view, text: options.paymentName + '\n\n' + view.text.replaceAll('основного бота','этого бота') };
     if (edit && ctx.callbackQuery?.message) return ctx.editMessageText(view.text, { reply_markup: view.reply_markup });
     return ctx.reply(view.text, { reply_markup: view.reply_markup });
   }
@@ -129,18 +137,20 @@ export function installPaymentAdminPanel(bot, store, options = {}) {
     ]);
   }
 
-  bot.command('payments', ctx => showPayments(ctx));
-  bot.command('balance', ctx => showPayments(ctx));
-  bot.hears(PAYMENTS_LABEL, ctx => showPayments(ctx));
-  bot.callbackQuery('payments:home', async ctx => { await ctx.answerCallbackQuery(); return showPayments(ctx, true); });
-  bot.callbackQuery(new RegExp(`^payment:p:(${UUID})$`), async ctx => { await ctx.answerCallbackQuery(); return showDetail(ctx, ctx.match[1]); });
-  bot.callbackQuery(new RegExp(`^refundask:p:(${UUID})$`), async ctx => { await ctx.answerCallbackQuery(); return askRefund(ctx, ctx.match[1]); });
-  bot.command('refund', ctx => askRefund(ctx, String(ctx.match || '').trim()));
-  bot.callbackQuery('payrefund:cancel', async ctx => {
+  if (!prefix) {
+    bot.command('payments', ctx => showPayments(ctx));
+    bot.command('balance', ctx => showPayments(ctx));
+    bot.hears(PAYMENTS_LABEL, ctx => showPayments(ctx));
+    bot.command('refund', ctx => askRefund(ctx, String(ctx.match || '').trim()));
+  }
+  bot.callbackQuery(route('payments:home'), async ctx => { await ctx.answerCallbackQuery(); return showPayments(ctx, true); });
+  bot.callbackQuery(matcher(`payment:p:(${UUID})`), async ctx => { await ctx.answerCallbackQuery(); return showDetail(ctx, ctx.match[1]); });
+  bot.callbackQuery(matcher(`refundask:p:(${UUID})`), async ctx => { await ctx.answerCallbackQuery(); return askRefund(ctx, ctx.match[1]); });
+  bot.callbackQuery(route('payrefund:cancel'), async ctx => {
     if (!await privateOnly(ctx)) return;
     for (const key of confirmations.keys()) if (key.startsWith(`${ctx.from.id}:`)) confirmations.delete(key);
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText('Возврат отменён. Деньги не возвращались.', { reply_markup: new InlineKeyboard().text('← Платежи и баланс', 'payments:home') });
+    await deliver(ctx, {text:'Возврат отменён. Деньги не возвращались.',reply_markup:new InlineKeyboard().text('← Платежи и баланс','payments:home')},true);
   });
-  bot.callbackQuery(new RegExp(`^payrefund:(${UUID})$`), ctx => executeRefund(ctx, ctx.match[1]));
+  bot.callbackQuery(matcher(`payrefund:(${UUID})`), ctx => executeRefund(ctx, ctx.match[1]));
 }

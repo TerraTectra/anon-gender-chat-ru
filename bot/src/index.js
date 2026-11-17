@@ -106,6 +106,16 @@ const adminBot = createAdminBot(adminToken, dbPath, process.env.ADMIN_IDS, {
   sourcePaymentRefund: (userId, chargeId) => userBot.api.refundStarPayment(userId, chargeId),
   sourcePaymentMessage: (userId, text) => userBot.api.sendMessage(userId, text),
   sourcePaymentReconcile: () => userBot.reconcilePremium(),
+  networkPaymentAction: async (brand,action,...args) => {
+    const source = brand === 'anon' ? userBot : variantBotRegistry.get(brand);
+    if (!source) throw new Error('payment_bot_unavailable');
+    if (action === 'balance') return source.api.getMyStarBalance();
+    if (action === 'botId') return source.botInfo.id;
+    if (action === 'refund') return source.api.refundStarPayment(...args);
+    if (action === 'message') return source.api.sendMessage(...args);
+    if (action === 'reconcile') return source.reconcilePremium();
+    throw new Error('unknown_payment_action');
+  },
   sourceSessionNotifier: (userId, text, sourceBrand = "anon") => {
     const api = sourceBrand === "anon" ? userBot.api : variantBotRegistry.get(sourceBrand)?.api;
     if (!api) throw new Error("Unknown source bot for session notification");
@@ -128,7 +138,10 @@ const taskBot = taskToken ? (anonVariantsEnabled ? createAnonVariantBot("task", 
 const quizBot = quizToken ? (anonVariantsEnabled ? createAnonVariantBot("quiz", quizToken, process.env.ADMIN_IDS) : createMediaBot(quizToken, quizDbPath)) : null;
 if (anonVariantsEnabled) {
   for (const [id, instance] of [["english",englishBot],["focus",focusBot],["game",gameBot],["budget",budgetBot],["hub",hubBot],["task",taskBot],["quiz",quizBot],["party",partyBot]]) {
-    if (instance) variantBotRegistry.set(id, instance);
+    if (instance) {
+      variantBotRegistry.set(id, instance);
+      instance.paymentAdminNotifier = (adminId,text) => adminBot.api.sendMessage(adminId,text);
+    }
   }
 }
 adminBot.startDailyReportScheduler();
@@ -159,6 +172,7 @@ function writeHealth(status = healthStatus, details = {}) {
     anon_transport: telegramTransportMode(),
     anon_polling: userBot.pollingState(),
     anon_api: userBot.telegramMetrics(),
+    public_bots: [{id:'anon',bot:userBot}, ...[...variantBotRegistry].map(([id,bot])=>({id,bot}))].map(({id,bot})=>({id,polling:bot.pollingState(),api:bot.telegramMetrics()})),
     channels: channelPublisher.status().filter((channel) => channel.enabled).length,
     ...details
   }, null, 2);

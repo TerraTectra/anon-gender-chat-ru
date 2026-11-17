@@ -53,6 +53,8 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
   const privateChat = ctx => ctx.chat?.type === "private";
   const sources = BRANDS.map(item => ({ id: item.id, store: stores.get(item.id) }));
   const pendingArchiveClear = new Map();
+  const pendingSessionDelete = new Map();
+  const deletionKey = (ctx,id,sessionId) => `${ctx.from?.id}:${id}:${sessionId}`;
   const sourceKind = kind => kind.endsWith("a") ? "a" : "m";
   const globalKind = kind => kind.startsWith("g");
   const listCallback = (id, kind, page) => globalKind(kind)
@@ -284,12 +286,17 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     const keyboard = new InlineKeyboard()
       .text("🗑 Да, удалить безвозвратно", "multi_delete_confirm:" + id + ":" + sessionId + ":" + kind + ":" + page).row()
       .text("Отмена", "multi_session:" + id + ":" + sessionId + ":" + kind + ":" + page);
+    for (const [key,expiry] of pendingSessionDelete) if(expiry<=Date.now())pendingSessionDelete.delete(key);
+    pendingSessionDelete.set(deletionKey(ctx,id,sessionId),Date.now()+120_000);
     return ctx.editMessageText("Удалить сессию #" + sessionId + " из " + brand(id).name
       + "?\n" + warning + favorite, { reply_markup: keyboard });
   }
 
   async function confirmDeleteSession(ctx, id, sessionId, kind, page) {
     if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const key=deletionKey(ctx,id,sessionId);
+    if((pendingSessionDelete.get(key)||0)<=Date.now())return ctx.answerCallbackQuery({text:'Подтверждение устарело. Снова откройте удаление в карточке сессии.',show_alert:true});
+    pendingSessionDelete.delete(key);
     const st = store(id);
     if (!st || !st.getChatSession(sessionId)) {
       return ctx.answerCallbackQuery({ text: "Сессия уже удалена", show_alert: true });
@@ -430,7 +437,10 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     await viewList(ctx, ctx.match[1], ctx.match[2], Number(ctx.match[3]));
   });
   bot.callbackQuery(new RegExp("^multi_session:" + IDS + ":(\\d+):(a|m|ga|gm):(\\d+)$"),
-    ctx => viewSession(ctx, ctx.match[1], Number(ctx.match[2]), ctx.match[3], Number(ctx.match[4])));
+    ctx => {
+      pendingSessionDelete.delete(deletionKey(ctx,ctx.match[1],Number(ctx.match[2])));
+      return viewSession(ctx, ctx.match[1], Number(ctx.match[2]), ctx.match[3], Number(ctx.match[4]));
+    });
   bot.callbackQuery(new RegExp("^multi_timeline:" + IDS + ":(\\d+):(\\d+)(?::(a|m|ga|gm):(\\d+))?$"),
     ctx => timeline(ctx, ctx.match[1], Number(ctx.match[2]), Number(ctx.match[3]), ctx.match[4] || "m", Number(ctx.match[5] || 0)));
   bot.callbackQuery(new RegExp("^multi_favorite:" + IDS + ":(\\d+):(0|1):(a|m|ga|gm):(\\d+)$"), async ctx => {

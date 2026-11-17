@@ -75,11 +75,11 @@ test("admin can delete one archived session and bulk-clear the rest without affe
     };
     const log = [];
     adminNetwork = installChatNetworkAdmin(bot, original);
-    const trigger = async (payload) => {
+    const trigger = async (payload,actor=9000) => {
       const found = handlers.find(x => x.pattern === payload || (x.pattern instanceof RegExp && x.pattern.test(payload)));
       assert.ok(found, "No callback for " + payload);
       const ctx = {
-        chat: { id: 9000, type: "private" }, from: { id: 9000 },
+        chat: { id: actor, type: "private" }, from: { id: actor },
         match: found.pattern instanceof RegExp ? payload.match(found.pattern) : payload,
         api: {},
         answerCallbackQuery: async () => {},
@@ -114,7 +114,11 @@ test("admin can delete one archived session and bulk-clear the rest without affe
         assert.match(detail.text, /@EnglishTalkMatchBot/);
         const actions = detail.options.reply_markup.inline_keyboard.flat();
         assert.ok(actions.some(x=>x.callback_data==="multi_delete:english:1:gm:0"));
+        await trigger("multi_delete_confirm:english:1:gm:0");
+        assert.ok(guest.getChatSession(1), "a forged confirmation cannot bypass the first step");
         await trigger("multi_delete:english:1:gm:0");
+        await trigger("multi_delete_confirm:english:1:gm:0",9001);
+        assert.ok(guest.getChatSession(1), "confirmation belongs to the requesting admin");
         assert.ok(guest.getChatSession(1), "confirmation step must not delete");
         await trigger("multi_delete_confirm:english:1:gm:0");
         assert.equal(guest.getChatSession(1), null);
