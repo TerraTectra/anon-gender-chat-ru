@@ -269,6 +269,130 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
       { protect_content: true, reply_markup: keyboard });
   }
 
+
+  async function askDeleteSession(ctx, id, sessionId, kind, page) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const st = store(id);
+    const session = st?.getChatSession(sessionId);
+    if (!session) return ctx.answerCallbackQuery({ text: "Сессия уже удалена", show_alert: true });
+    await ctx.answerCallbackQuery();
+    const active = session.status === "active";
+    const warning = active
+      ? "Сейчас идёт разговор. Он будет завершён для обоих участников."
+      : "Все сообщения и сохранённые локальные вложения будут удалены безвозвратно.";
+    const favorite = Number(session.is_favorite) ? "\nВНИМАНИЕ: сессия добавлена в избранное." : "";
+    const keyboard = new InlineKeyboard()
+      .text("🗑 Да, удалить безвозвратно", "multi_delete_confirm:" + id + ":" + sessionId + ":" + kind + ":" + page).row()
+      .text("Отмена", "multi_session:" + id + ":" + sessionId + ":" + kind + ":" + page);
+    return ctx.editMessageText("Удалить сессию #" + sessionId + " из " + brand(id).name
+      + "?\n" + warning + favorite, { reply_markup: keyboard });
+  }
+
+  async function confirmDeleteSession(ctx, id, sessionId, kind, page) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const st = store(id);
+    if (!st || !st.getChatSession(sessionId)) {
+      return ctx.answerCallbackQuery({ text: "Сессия уже удалена", show_alert: true });
+    }
+    await ctx.answerCallbackQuery("Удаляю сессию");
+    const removed = st.deleteChatSession(sessionId);
+    if (!removed) return ctx.editMessageText("Сессия уже удалена.");
+    if (removed.status === "active" && options.sourceSessionNotifier) {
+      for (const userId of removed.userIds || []) {
+        try {
+          await options.sourceSessionNotifier(userId, "Ваш чат завершён администрацией.", id);
+        } catch (error) {
+          console.error("Unable to notify session participant", String(error?.code || "unknown"));
+        }
+      }
+    }
+    return ctx.editMessageText(brand(id).name + " · сессия #" + sessionId
+      + "\nПереписка и сохранённые локальные вложения удалены.", {
+      reply_markup: new InlineKeyboard().text("← К списку", listCallback(id, kind, page))
+    });
+  }
+
+  function archiveClearRequest(ctx, token, stage) {
+    const request = pendingArchiveClear.get(token);
+    if (!request || Date.now() > request.expiresAt
+      || request.ownerId !== ctx.from?.id || request.stage !== stage) return null;
+    return request;
+  }
+
+  async function requestArchiveClear(ctx) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    await ctx.answerCallbackQuery();
+    expireArchiveClearRequests();
+    let items;
+    try {
+      items = collectClearableArchiveIds(sources);
+    } catch (error) {
+      return ctx.editMessageText("Массовая очистка недоступна: слишком много сессий. Удаляйте их по отдельности.", {
+        reply_markup: new InlineKeyboard().text("← Общий архив", "multi_all:m:0")
+      });
+    }
+    if (!items.length) return ctx.editMessageText("В архиве нет завершённых сессий для массового удаления. Избранное защищено.", {
+      reply_markup: new InlineKeyboard().text("← Общий архив", "multi_all:m:0")
+    });
+    const token = crypto.randomBytes(8).toString("hex");
+    pendingArchiveClear.set(token, {
+      ownerId: ctx.from?.id, expiresAt: Date.now() + 120_000,
+      stage: 1, items
+    });
+    return ctx.editMessageText("Очистить общий архив всех девяти чатов?\n\n"
+      + "Будет удалено завершённых сессий: " + items.length + ".\n"
+      + "Избранные и активные сессии сохранятся.\n"
+      + "Удаление переписок и файлов необратимо.\n\n"
+      + "Подтверждение действительно две минуты.", {
+      reply_markup: new InlineKeyboard()
+        .text("Продолжить к подтверждению", "multi_clear_stage2:" + token).row()
+        .text("Отмена", "multi_all:m:0")
+    });
+  }
+
+  async function confirmArchiveClearStage(ctx, token) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const request = archiveClearRequest(ctx, token, 1);
+    if (!request) return ctx.answerCallbackQuery({ text: "Подтверждение истекло", show_alert: true });
+    request.stage = 2;
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText("Последнее подтверждение.\n"
+      + "Удалить " + request.items.length + " завершённых не избранных сессий из всех чатов?\n"
+      + "Вернуть переписки и файлы после удаления будет невозможно.", {
+      reply_markup: new InlineKeyboard()
+        .text("🗑 Удалить " + request.items.length + " сессий", "multi_clear_execute:" + token).row()
+        .text("Отмена", "multi_all:m:0")
+    });
+  }
+
+  async function executeArchiveClear(ctx, token) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const request = archiveClearRequest(ctx, token, 2);
+    if (!request) return ctx.answerCallbackQuery({ text: "Подтверждение истекло", show_alert: true });
+    pendingArchiveClear.delete(token); // prevents accidental duplicate processing
+    await ctx.answerCallbackQuery("Очищаю архив");
+    let deleted = 0, skipped = 0;
+    for (const [index, item] of request.items.entries()) {
+      const st = store(item.brandId);
+      const session = st?.getChatSession(item.sessionId);
+      if (session?.status === "ended" && !Number(session.is_favorite)) {
+        try {
+          if (st.deleteChatSession(item.sessionId)) deleted += 1;
+          else skipped += 1;
+        } catch (error) {
+          skipped += 1;
+          console.error("Archive cleanup failed for one session", item.brandId, String(error?.code || "unknown"));
+        }
+      } else skipped += 1;
+      if (index % 20 === 19) await new Promise(resolve => setImmediate(resolve));
+    }
+    return ctx.editMessageText("Общий архив очищен.\nУдалено сессий: " + deleted
+      + "\nПропущено или защищено: " + skipped
+      + "\nИзбранное и активные разговоры сохранены.", {
+      reply_markup: new InlineKeyboard().text("← Общий архив", "multi_all:m:0")
+    });
+  }
+
   bot.command("chats", ctx => dashboard(ctx));
   bot.hears("💬 Все чаты", ctx => dashboard(ctx));
   bot.callbackQuery("multi_home", async ctx => { await ctx.answerCallbackQuery(); await dashboard(ctx, true); });
@@ -322,6 +446,14 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
       + ".\nДругие боты не затронуты.\nРазблокировка: /unban_chat " + id + " " + person.id,
       {reply_markup:new InlineKeyboard().text("← Все чаты","multi_home")});
   });
+  bot.callbackQuery(new RegExp("^multi_delete:" + IDS + ":(\\d+):(a|m|ga|gm):(\\d+)$"), ctx =>
+    askDeleteSession(ctx, ctx.match[1], Number(ctx.match[2]), ctx.match[3], Number(ctx.match[4])));
+  bot.callbackQuery(new RegExp("^multi_delete_confirm:" + IDS + ":(\\d+):(a|m|ga|gm):(\\d+)$"), ctx =>
+    confirmDeleteSession(ctx, ctx.match[1], Number(ctx.match[2]), ctx.match[3], Number(ctx.match[4])));
+  bot.callbackQuery("multi_clear_prepare", requestArchiveClear);
+  bot.callbackQuery(/^multi_clear_stage2:([0-9a-f]{16})$/, ctx => confirmArchiveClearStage(ctx, ctx.match[1]));
+  bot.callbackQuery(/^multi_clear_execute:([0-9a-f]{16})$/, ctx => executeArchiveClear(ctx, ctx.match[1]));
+
   bot.command("unban_chat",async ctx => {
     if (!privateChat(ctx)) return ctx.reply("Только в личном чате.");
     const [id,rawId]=String(ctx.match||"").trim().split(/\s+/), st=store(id), userId=Number(rawId);
