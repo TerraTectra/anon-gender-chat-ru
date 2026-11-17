@@ -129,7 +129,7 @@ export class Store {
     this.db = new DatabaseSync(absolute);
     this.db.exec(SCHEMA);
     this.db.exec('PRAGMA busy_timeout = 3000');
-    this.premium = new PremiumStore(this.db);
+    this.premium = new PremiumStore(this.db, options.premiumOptions);
     if (!this.db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'search_mode')) {
       this.db.exec("ALTER TABLE users ADD COLUMN search_mode TEXT NOT NULL DEFAULT 'random'");
       this.db.exec("UPDATE users SET search_mode = COALESCE((SELECT mode FROM queue WHERE user_id=users.id), 'random')");

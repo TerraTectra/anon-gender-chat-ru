@@ -17,6 +17,7 @@ import { Store } from "./store.js";
 import { installChatNetworkAdmin } from "./chat-network-admin.js";
 import { anonVariantMetrics, banAcrossAnonVariants, pendingAnonVariantReports, reviewAnonVariantReport } from "./anon-variants.js";
 import { installPremiumAdmin } from "./premium-admin.js";
+import { installNetworkPaymentAdmin } from './network-payment-admin.js';
 import { installTelegramReliability, createSingleFlightRetry } from './telegram-reliability.js';
 
 function parseAdmins(value = "") {
@@ -232,7 +233,8 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
   ].filter(Boolean);
   let reportTimer = null;
   let networkAdmin = null;
-  bot.closeStore = () => { networkAdmin?.close(); store.close(); };
+  let networkPayments = null;
+  bot.closeStore = () => { networkPayments?.close(); networkAdmin?.close(); store.close(); };
 
   const productKeyboard = new InlineKeyboard()
     .text("Анонимный чат", "admin_product:anon")
@@ -848,7 +850,8 @@ export function createAdminBot(token, dbPath, adminIds, options = {}) {
     });
   }
   if (options.anonVariantsEnabled) networkAdmin = installChatNetworkAdmin(bot, store, options);
-  installPremiumAdmin(bot, store, options);
+  if (options.anonVariantsEnabled) networkPayments = installNetworkPaymentAdmin(bot, store, options);
+  installPremiumAdmin(bot, store, { ...options, paymentNetwork: options.anonVariantsEnabled });
   bot.command("start", (ctx) => ctx.reply(networkOverviewText(), { reply_markup: adminKeyboard }));
   bot.command("overview", (ctx) => ctx.reply(networkOverviewText(), { reply_markup: adminKeyboard }));
   bot.hears(["🏠 Обзор", "🔄 Обновить"], (ctx) => ctx.reply(networkOverviewText(), { reply_markup: adminKeyboard }));
