@@ -18,8 +18,9 @@ async function fixture(run) {
   });
   let update=1;
   const send=async(id,text)=>bot.handleUpdate({update_id:update++,message:{message_id:update,date:1,from:{id,is_bot:false,first_name:'Synthetic'},chat:{id,type:'private'},text,...(text.startsWith('/')?{entities:[{type:'bot_command',offset:0,length:text.split(' ')[0].length}]}:{})}});
+  const callback=async(id,data)=>bot.handleUpdate({update_id:update++,callback_query:{id:String(update),from:{id,is_bot:false,first_name:'Synthetic'},chat_instance:'test',data,message:{message_id:100,date:1,chat:{id,type:'private'},text:'confirm'}}});
   for(const [id,gender]of [[1,'male'],[2,'female'],[3,'female']]){store.upsertUser(id,'synthetic');store.setProfile(id,{age:25,gender});}
-  try { await run({store,send,sent}); } finally {store.close();fs.rmSync(dir,{recursive:true,force:true});}
+  try { await run({store,send,callback,sent}); } finally {store.close();fs.rmSync(dir,{recursive:true,force:true});}
 }
 
 test('slash stop disconnects both partners and is never relayed',()=>fixture(async({store,send,sent})=>{
@@ -55,4 +56,22 @@ test('report alias presents confirmation without silently reporting',()=>fixture
 test('normal chat text is still relayed',()=>fixture(async({store,send,sent})=>{
   store.enqueue(1,'random');store.enqueue(2,'random');await send(1,'Привет');
   assert.ok(sent.some(x=>x.method==='copyMessage'&&x.chat_id===2));
+}));
+
+test('reported user cannot see complaint text and moderator receives the reason',()=>fixture(async({store,send,callback,sent})=>{
+  store.enqueue(1,'random');
+  store.enqueue(2,'random');
+  await send(1,'/report');
+  assert.equal(store.stats().reports,0);
+  await callback(1,'report:confirm');
+  assert.ok(sent.some(x=>x.text?.includes('Опишите, что произошло')));
+  assert.equal(store.stats().reports,0);
+  await send(1,'Пользователь оскорбляет меня в чате');
+  const [report]=store.recentReports();
+  assert.equal(report.reporter_id,1);
+  assert.equal(report.reported_id,2);
+  assert.equal(report.reason,'Пользователь оскорбляет меня в чате');
+  assert.equal(store.getUser(1).partner_id,null);
+  assert.equal(store.getUser(2).partner_id,null);
+  assert.ok(!sent.some(x=>x.method==='copyMessage'&&x.chat_id===2&&x.text?.includes('Пользователь оскорбляет')));
 }));
