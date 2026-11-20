@@ -690,6 +690,12 @@ export function createUserBot(token, dbPath, options = {}) {
   });
 
   bot.on(["message:photo", "message:video", "message:voice", "message:video_note", "message:document", "message:sticker", "message:animation"], async (ctx) => {
+    if (ctx.session.step === "report_reason") {
+      await ctx.reply("Для жалобы напишите текст причины (до 1000 символов). Вложения в режиме жалобы не пересылаются собеседнику.", {
+        reply_markup: new InlineKeyboard().text("Отмена", "report:cancel")
+      });
+      return;
+    }
     const user = store.getUser(ctx.from.id);
     if (!user?.partner_id) {
       await ctx.reply("Сейчас нет активного собеседника.", { reply_markup: menuKeyboard });
