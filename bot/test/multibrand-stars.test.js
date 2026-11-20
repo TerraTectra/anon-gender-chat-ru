@@ -173,7 +173,7 @@ test('network admin authorizes before routing, scopes refunds and support to the
   const cb=(id,data)=>admin.handleUpdate({update_id:n++,callback_query:{id:String(n),from:from(id),chat_instance:'test',data,message:{message_id:1,date:1,chat:{id,type:'private'},text:'offline'}}});
   await send(1,'/payments');await cb(1,'np:english:payrefund:'+o.id);assert.equal(actions.length,0);
   await send(9,'/payments','group');assert.equal(actions.length,0);
-  await send(9,'/payments');assert.ok(sent.some(x=>x.text?.includes('Платежи всех 9')));
+  await send(9,'/payments');assert.ok(sent.some(x=>x.text?.includes('Баланс сети Telegram Stars')));assert.ok(sent.some(x=>x.text?.includes('63 ⭐')));await cb(9,'payments:network_breakdown');assert.ok(sent.some(x=>x.text?.includes('Платежи по ботам')));await cb(9,'payments:network_manage');assert.ok(sent.some(x=>x.text?.includes('Выберите бота для просмотра платежей')));
   await cb(9,'np:english:payments:home');assert.ok(actions.some(x=>x.id==='english'&&x.action==='balance'));
   await cb(9,'np:english:payment:p:'+o.id);await cb(9,'np:focus:payment:p:'+o.id);
   assert.ok(sent.some(x=>x.text?.includes('не найден')));

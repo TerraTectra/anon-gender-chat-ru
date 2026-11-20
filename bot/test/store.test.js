@@ -119,3 +119,25 @@ test("store tracks bot blocks and real activity separately from registrations", 
     store.markUserActive(2); const after=store.stats(); assert.equal(after.blocked,0); assert.equal(after.reachable,2); assert.equal(after.unknown,1);
   });
 });
+
+
+test("complaints retain written reasons and support idempotent moderation", () => {
+  withStore((store) => {
+    store.upsertUser(101, "reporter");
+    store.upsertUser(202, "reported");
+    const reason = "Оскорбления и угрозы в переписке";
+    store.reportAndBlock(101, 202, reason);
+    const report = store.recentReports()[0];
+    assert.equal(report.reason, reason);
+    assert.equal(store.pendingReport(report.id).reported_id, 202);
+    assert.equal(store.reviewReport(report.id), true);
+    assert.equal(store.reviewReport(report.id), false);
+    assert.equal(store.pendingReport(report.id), null);
+
+    store.reportAndBlock(101, 202, "X".repeat(1205));
+    assert.equal(store.recentReports()[0].reason.length, 1000);
+    store.reportAndBlock(101, 202);
+    assert.equal(store.recentReports()[0].reason, "user_report");
+    assert.throws(() => store.reportAndBlock(101, 101, "invalid"), TypeError);
+  });
+});

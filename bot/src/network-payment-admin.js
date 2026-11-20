@@ -16,6 +16,48 @@ export function premiumMetrics(premium, now = Date.now()) {
     review:premium.db.prepare('SELECT COUNT(*) n FROM payment_anomalies').get().n };
 }
 
+// A Telegram balance is different from the cumulative payment ledger.
+export function starNanoAmount(value) {
+  if (!Number.isSafeInteger(value?.amount) ||
+      !Number.isInteger(value.nanostar_amount ?? 0) ||
+      Math.abs(value.nanostar_amount ?? 0) >= 1_000_000_000) {
+    throw new Error('invalid_star_balance');
+  }
+  return BigInt(value.amount) * 1_000_000_000n + BigInt(value.nanostar_amount ?? 0);
+}
+
+export function formatNanoStars(nano) {
+  const n = BigInt(nano);
+  const abs = n < 0n ? -n : n;
+  const whole = abs / 1_000_000_000n;
+  const fraction = (abs % 1_000_000_000n).toString().padStart(9, '0').replace(/0+$/, '');
+  return (n < 0n ? '−' : '') + whole.toString() + (fraction ? ',' + fraction : '');
+}
+
+export async function networkStarBalances(brands, balanceProvider) {
+  const entries = await Promise.all(brands.map(async brand => {
+    try {
+      return { ...brand, nano: starNanoAmount(await balanceProvider(brand.id)), available: true };
+    } catch {
+      return { ...brand, nano: null, available: false };
+    }
+  }));
+  const complete = entries.every(item => item.available);
+  const totalNano = entries.reduce((sum, item) => sum + (item.nano ?? 0n), 0n);
+  return { entries, complete, totalNano, connected: entries.filter(item => item.available).length };
+}
+
+export function allTimePaymentTotals(premium) {
+  const row = premium.db.prepare(`
+    SELECT COUNT(*) AS purchases,
+           COALESCE(SUM(stars), 0) AS received,
+           COALESCE(SUM(CASE WHEN refunded_ms IS NOT NULL THEN stars ELSE 0 END), 0) AS refunded
+    FROM premium_payments
+  `).get();
+  return { purchases: Number(row.purchases), received: Number(row.received),
+    refunded: Number(row.refunded), net: Number(row.received) - Number(row.refunded) };
+}
+
 // Registered only after the existing ADMIN_IDS middleware. All money operations
 // use the selected bot API and its own database; no token enters callback data.
 export function installNetworkPaymentAdmin(bot, original, options = {}) {
@@ -33,18 +75,51 @@ export function installNetworkPaymentAdmin(bot, original, options = {}) {
     await ctx.reply('Платежи доступны только в личном чате администратора.');return false;
   };
   const back = () => new InlineKeyboard().text('← Платежи всех ботов','payments:network');
+  const readBalances = () => networkStarBalances(brands, id => api(id,'balance'));
   async function dashboard(ctx,edit=false) {
     if(!await privateOnly(ctx))return;
-    const rows=[];const keyboard=new InlineKeyboard();
-    for(const b of brands){
-      const m=premiumMetrics(stores.get(b.id).premium);
-      const plans=Object.values(paymentConfiguration(b.id).plans).map(p=>`${p.days}д ${p.stars}⭐`).join(' · ');
-      rows.push(`${b.name}\n@${b.username}\n${plans}\nЗа 7д: меню ${m.views}, заказчики ${m.orders}, согласия ${m.accepted}, покупателей ${m.buyers}, оплат ${m.purchases}; получено ${m.gross}⭐, из них возвращено ${m.refunded}⭐. Активных ${m.active}, проверок ${m.review}.\nМеню → покупка: ${m.converted}/${m.views} (${m.conversion===null?'нет данных':m.conversion+'%'}).`);
-      keyboard.text(b.name,b.id==='anon'?'payments:home':`np:${b.id}:payments:home`).row();
-    }
-    keyboard.text('Обращения всех ботов','payments:network_support').row().text('Обновить','payments:network');
-    const text='💳 Платежи всех 9 ботов · Telegram Stars\n\n'+rows.join('\n\n')+'\n\nСчётчики относятся к каждому боту отдельно. Это эксперимент брендов и цен, не случайное распределение пользователей. Конверсия по малой выборке не доказывает влияние цены. Живой баланс и возврат — в карточке бота.';
-    return edit?ctx.editMessageText(text,{reply_markup:keyboard}):ctx.reply(text,{reply_markup:keyboard});
+    const summary = await readBalances();
+    const balance = summary.complete
+      ? formatNanoStars(summary.totalNano) + ' ⭐'
+      : 'не удалось подтвердить (доступно ' + summary.connected + ' из ' + brands.length + ' ботов)';
+    const keyboard = new InlineKeyboard()
+      .text('📊 По ботам', 'payments:network_breakdown').row()
+      .text('🧾 Платежи и возвраты', 'payments:network_manage').row()
+      .text('✉️ Обращения', 'payments:network_support')
+      .text('🔄 Обновить', 'payments:network');
+    const message = '💳 Баланс сети Telegram Stars\n\n' + balance
+      + '\n\n' + (summary.complete
+        ? 'Сумма текущих балансов всех девяти ботов по данным Telegram.'
+        : 'Неизвестные балансы НЕ приравниваются к нулю. Проверить отдельные суммы можно в разделе «По ботам».');
+    return edit ? ctx.editMessageText(message,{reply_markup:keyboard})
+      : ctx.reply(message,{reply_markup:keyboard});
+  }
+  async function breakdown(ctx,edit=false) {
+    if(!await privateOnly(ctx))return;
+    const summary = await readBalances();
+    const rows = summary.entries.map(item => {
+      const ledger = allTimePaymentTotals(stores.get(item.id).premium);
+      return item.name + '\nБаланс: ' + (item.available ? formatNanoStars(item.nano) + ' ⭐' : 'недоступен')
+        + '\nЗа всё время поступило: ' + ledger.received + ' ⭐ · возвращено: ' + ledger.refunded
+        + ' ⭐ · чистые поступления: ' + ledger.net + ' ⭐';
+    });
+    const keyboard = new InlineKeyboard()
+      .text('🔄 Обновить', 'payments:network_breakdown').row()
+      .text('← Общий баланс', 'payments:network');
+    const message = '📊 Платежи по ботам\n\n' + rows.join('\n\n')
+      + '\n\nБаланс — текущие звёзды в Telegram. Поступления — записи подтверждённых платежей, за вычетом возвратов; они не равны балансу.';
+    return edit ? ctx.editMessageText(message,{reply_markup:keyboard})
+      : ctx.reply(message,{reply_markup:keyboard});
+  }
+  async function paymentManagement(ctx,edit=false) {
+    if(!await privateOnly(ctx))return;
+    const keyboard = new InlineKeyboard();
+    for(const b of brands) keyboard.text(b.name,
+      b.id==='anon' ? 'payments:home' : 'np:' + b.id + ':payments:home').row();
+    keyboard.text('← Общий баланс','payments:network');
+    const message = '🧾 Выберите бота для просмотра платежей и подтверждаемых возвратов.';
+    return edit ? ctx.editMessageText(message,{reply_markup:keyboard})
+      : ctx.reply(message,{reply_markup:keyboard});
   }
   async function support(ctx,id=null){
     if(!await privateOnly(ctx))return;
@@ -56,6 +131,8 @@ export function installNetworkPaymentAdmin(bot, original, options = {}) {
   bot.command('balance',ctx=>dashboard(ctx));
   bot.hears(PAYMENTS_LABEL,ctx=>dashboard(ctx));
   bot.callbackQuery('payments:network',async ctx=>{await ctx.answerCallbackQuery();return dashboard(ctx,true);});
+  bot.callbackQuery('payments:network_breakdown',async ctx=>{await ctx.answerCallbackQuery();return breakdown(ctx,true);});
+  bot.callbackQuery('payments:network_manage',async ctx=>{await ctx.answerCallbackQuery();return paymentManagement(ctx,true);});
   bot.command('payment_support',ctx=>support(ctx));
   bot.callbackQuery('payments:network_support',async ctx=>{await ctx.answerCallbackQuery();return support(ctx);});
   bot.command('payreply_chat',async ctx=>{
