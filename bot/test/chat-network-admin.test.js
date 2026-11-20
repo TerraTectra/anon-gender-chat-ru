@@ -99,7 +99,7 @@ test("single admin entry, chronological mixed chat transcript, and per-bot sessi
     assert.match(emitted.at(-1).text, /Жалобы на проверке/);
     assert.match(emitted.at(-1).text, /Присылал оскорбительные сообщения/);
     await send("multi_report_card:english:" + report.id);
-    assert.match(emitted.at(-1).text, /Текст жалобы:\\nПрисылал оскорбительные сообщения/);
+    assert.match(emitted.at(-1).text, /Текст жалобы:\nПрисылал оскорбительные сообщения/);
     await send("multi_report_ban_ask:english:" + report.id + ":222");
     assert.equal(guest.isBanned(222), false, "A confirmation prompt must not silently ban");
     await send("multi_report_ban_confirm:english:" + report.id + ":222");
