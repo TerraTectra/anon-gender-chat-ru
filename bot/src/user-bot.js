@@ -503,22 +503,21 @@ export function createUserBot(token, dbPath, options = {}) {
 
   bot.callbackQuery("report:cancel", async (ctx) => {
     ctx.session.pendingReportId = null;
+    ctx.session.step = null;
     await ctx.answerCallbackQuery("Отменено");
     await ctx.editMessageText("Жалоба отменена.");
   });
 
   bot.callbackQuery("report:confirm", async (ctx) => {
-    const reportedId = ctx.session.pendingReportId;
-    if (!reportedId || store.getUser(ctx.from.id)?.partner_id !== reportedId) {
-      await ctx.answerCallbackQuery("Собеседник уже отключён");
+    if (!ctx.session.pendingReportId) {
+      await ctx.answerCallbackQuery("Нет собеседника для жалобы");
       return;
     }
-    store.reportAndBlock(ctx.from.id, reportedId);
-    store.recordEvent(ctx.from.id, "report");
-    ctx.session.pendingReportId = null;
-    await ctx.answerCallbackQuery("Жалоба отправлена");
-    await ctx.editMessageText("Жалоба отправлена. Этот пользователь больше не попадётся вам.");
-    await notifyPartner(ctx, reportedId, "Собеседник завершил чат.");
+    ctx.session.step = "report_reason";
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText("Опишите, что произошло (до 1000 символов). Текст получит только администрация, собеседнику его не передадут. После отправки жалобы чат завершится.", {
+      reply_markup: new InlineKeyboard().text("Отмена", "report:cancel")
+    });
   });
 
   registerAction(labels.random, "search", (ctx) => startSearch(ctx, "random"));
@@ -616,6 +615,27 @@ export function createUserBot(token, dbPath, options = {}) {
 
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
+    if (ctx.session.step === "report_reason" && !text.startsWith("/")) {
+      const reportedId = Number(ctx.session.pendingReportId);
+      if (!Number.isSafeInteger(reportedId) || reportedId <= 0) {
+        ctx.session.step = null;
+        ctx.session.pendingReportId = null;
+        await ctx.reply("Сведения о собеседнике устарели. Начните новый поиск.", { reply_markup: menuKeyboard });
+        return;
+      }
+      if (!text || text.length > 1000) {
+        await ctx.reply("Опишите причину жалобы текстом от 1 до 1000 символов.");
+        return;
+      }
+      const stillPaired = store.getUser(ctx.from.id)?.partner_id === reportedId;
+      store.reportAndBlock(ctx.from.id, reportedId, text);
+      store.recordEvent(ctx.from.id, "report");
+      ctx.session.pendingReportId = null;
+      ctx.session.step = null;
+      await ctx.reply("Жалоба с описанием передана администрации. Собеседник больше не попадётся вам.", { reply_markup: menuKeyboard });
+      if (stillPaired) await notifyPartner(ctx, reportedId, "Собеседник завершил чат.");
+      return;
+    }
     if (text.startsWith("/")) {
       await ctx.reply("Неизвестная команда. Используйте /search, /filters или /stop.", { reply_markup: menuKeyboard });
       return;
