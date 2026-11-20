@@ -530,7 +530,7 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
   bot.callbackQuery(/^multi_clear_stage2:([0-9a-f]{16})$/, ctx => confirmArchiveClearStage(ctx, ctx.match[1]));
   bot.callbackQuery(/^multi_clear_execute:([0-9a-f]{16})$/, ctx => executeArchiveClear(ctx, ctx.match[1]));
 
-  bot.callbackQuery(/^multi_reports:(\\d+)$/, async ctx => {
+  bot.callbackQuery(/^multi_reports:(\d+)$/, async ctx => {
     if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
     await ctx.answerCallbackQuery();
     return showAllReports(ctx, Number(ctx.match[1]), true);
