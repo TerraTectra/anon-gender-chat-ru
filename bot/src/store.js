@@ -559,9 +559,15 @@ export class Store {
     return user?.partner_id ?? null;
   }
 
-  reportAndBlock(reporterId, reportedId) {
+  reportAndBlock(reporterId, reportedId, reason = "user_report") {
+    const text = typeof reason === "string" ? reason.trim().slice(0, 1000) : "";
+    if (!Number.isSafeInteger(reporterId) || !Number.isSafeInteger(reportedId) ||
+        reporterId <= 0 || reportedId <= 0 || reporterId === reportedId) {
+      throw new TypeError("Invalid report participants");
+    }
     this.db.prepare("INSERT OR IGNORE INTO blocks (user_id, blocked_user_id) VALUES (?, ?)").run(reporterId, reportedId);
-    this.db.prepare("INSERT INTO reports (reporter_id, reported_id) VALUES (?, ?)").run(reporterId, reportedId);
+    this.db.prepare("INSERT INTO reports (reporter_id, reported_id, reason) VALUES (?, ?, ?)").run(
+      reporterId, reportedId, text || "user_report");
     this.disconnect(reporterId, "report");
   }
 
@@ -579,7 +585,11 @@ export class Store {
   }
 
   reviewReport(reportId) {
-    this.db.prepare("UPDATE reports SET reviewed_at = CURRENT_TIMESTAMP WHERE id = ?").run(reportId);
+    return Number(this.db.prepare("UPDATE reports SET reviewed_at = CURRENT_TIMESTAMP WHERE id = ? AND reviewed_at IS NULL").run(reportId).changes) > 0;
+  }
+
+  pendingReport(reportId) {
+    return this.db.prepare("SELECT id, reporter_id, reported_id, reason, created_at FROM reports WHERE id = ? AND reviewed_at IS NULL").get(reportId) || null;
   }
 
   stats() {
@@ -597,7 +607,7 @@ export class Store {
     return this.db.prepare(`
       SELECT id, reporter_id, reported_id, reason, created_at
       FROM reports WHERE reviewed_at IS NULL
-      ORDER BY created_at DESC LIMIT ?
+      ORDER BY created_at DESC, id DESC LIMIT ?
     `).all(limit);
   }
 }
