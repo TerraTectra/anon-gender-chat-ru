@@ -91,6 +91,36 @@ test("single admin entry, chronological mixed chat transcript, and per-bot sessi
     assert.equal(guest.isBanned(111),true);
     assert.equal(guest.isBanned(222),false);
     assert.equal(original.isBanned(111),false);
+
+    // A fresh complaint is shown with its full reason and managed in the selected bot only.
+    guest.reportAndBlock(111, 222, "Присылал оскорбительные сообщения");
+    const report = guest.recentReports()[0];
+    await send("multi_reports:0");
+    assert.match(emitted.at(-1).text, /Жалобы на проверке/);
+    assert.match(emitted.at(-1).text, /Присылал оскорбительные сообщения/);
+    await send("multi_report_card:english:" + report.id);
+    assert.match(emitted.at(-1).text, /Текст жалобы:\\nПрисылал оскорбительные сообщения/);
+    await send("multi_report_ban_ask:english:" + report.id + ":222");
+    assert.equal(guest.isBanned(222), false, "A confirmation prompt must not silently ban");
+    await send("multi_report_ban_confirm:english:" + report.id + ":222");
+    assert.equal(guest.isBanned(222), true);
+    assert.equal(original.isBanned(222), false);
+    assert.equal(guest.pendingReport(report.id), null);
+    await send("multi_report_unban:english:222");
+    assert.equal(guest.isBanned(222), false);
+
+    const dbExtra = new DatabaseSync(path.join(archiveRoot, "sessions.sqlite"));
+    for (let i = 4; i <= 18; i++) {
+      dbExtra.prepare(base).run(111, 111, i, "text", "Дополнительное сообщение " + i, null, t + i);
+    }
+    dbExtra.close();
+    await send("multi_timeline:english:1:0:ga:2");
+    const pagination = emitted.at(-1).options.reply_markup.inline_keyboard.flat().map(button => button.callback_data);
+    assert.ok(pagination.includes("multi_timeline:english:1:8:ga:2"), "Next page preserves global archive navigation");
+    await send("multi_timeline:english:1:8:ga:2");
+    const secondPage = emitted.at(-1).options.reply_markup.inline_keyboard.flat().map(button => button.callback_data);
+    assert.ok(secondPage.includes("multi_timeline:english:1:0:ga:2"), "Previous page preserves navigation context");
+    assert.ok(secondPage.includes("multi_session:english:1:ga:2"), "Back button returns to the originating global page");
   } finally {
     guest?.close();
     adminNetwork?.close();
