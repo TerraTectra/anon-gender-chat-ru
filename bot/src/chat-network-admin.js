@@ -263,9 +263,9 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
       if (!success) await ctx.reply(separateText ? "[Медиа недоступно]" : description + "\n[Медиа недоступно]", { protect_content: true });
     }
     const keyboard = new InlineKeyboard();
-    if (offset > 0) keyboard.text("← Ранее", "multi_timeline:" + id + ":" + sessionId + ":" + Math.max(0, offset - TIMELINE_SIZE));
+    if (offset > 0) keyboard.text("← Ранее", "multi_timeline:" + id + ":" + sessionId + ":" + Math.max(0, offset - TIMELINE_SIZE) + ":" + returnKind + ":" + returnPage);
     if (offset + result.items.length < result.total)
-      keyboard.text("Далее →", "multi_timeline:" + id + ":" + sessionId + ":" + (offset + result.items.length));
+      keyboard.text("Далее →", "multi_timeline:" + id + ":" + sessionId + ":" + (offset + result.items.length) + ":" + returnKind + ":" + returnPage);
     keyboard.row().text("← К сессии", "multi_session:" + id + ":" + sessionId + ":" + returnKind + ":" + returnPage);
     await ctx.reply("Просмотр " + (offset + 1) + "–" + (offset + result.items.length) + " из " + result.total,
       { protect_content: true, reply_markup: keyboard });
@@ -400,27 +400,70 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
     });
   }
 
-  async function showAllReports(ctx) {
+  const REPORTS_PAGE_SIZE = 8;
+  const reportText = (report) => {
+    const reason = String(report.reason || "").trim();
+    return !reason || reason === "user_report" ? "Причина не указана (старая жалоба)" : reason;
+  };
+
+  function pendingNetworkReports() {
+    const rows = BRANDS.flatMap(item => store(item.id).recentReports(200)
+      .map(report => ({ ...report, brandId: item.id })));
+    return rows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))
+      || Number(b.id) - Number(a.id));
+  }
+
+  async function showAllReports(ctx, page = 0, edit = false) {
     if (!privateChat(ctx)) return ctx.reply("Жалобы доступны только в личном чате с админ-ботом.");
-    const reports = [];
-    for (const item of BRANDS) {
-      const rows = store(item.id).recentReports(10);
-      for (const report of rows) reports.push({ ...report, brandId: item.id });
-    }
-    reports.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || b.id - a.id);
-    if (!reports.length) return ctx.reply("Новых жалоб во всех девяти чатах нет.", { protect_content: true });
-    await ctx.reply("🚩 Жалобы из всех чатов · последние " + Math.min(reports.length, 15)
-      + "\nВсего найдено (до 10 на бот): " + reports.length, { protect_content: true });
-    for (const report of reports.slice(0, 15)) {
-      const keyboard = new InlineKeyboard()
-        .text("⛔ Бан в этом боте", "multi_report_ban:" + report.brandId + ":" + report.id + ":" + report.reported_id)
-        .text("✓ Рассмотрено", "multi_report_review:" + report.brandId + ":" + report.id);
-      await ctx.reply(brand(report.brandId).name + " · жалоба #" + report.id
-        + "\nОт ID " + report.reporter_id + " на ID " + report.reported_id
-        + "\n" + (report.created_at || "время неизвестно"), {
-        protect_content: true, reply_markup: keyboard
-      });
-    }
+    const rows = pendingNetworkReports();
+    page = Math.min(validPage(page), Math.max(0, Math.ceil(rows.length / REPORTS_PAGE_SIZE) - 1));
+    const selected = rows.slice(page * REPORTS_PAGE_SIZE, (page + 1) * REPORTS_PAGE_SIZE);
+    const keyboard = new InlineKeyboard();
+    for (const row of selected) keyboard.text(brand(row.brandId).name + " · #" + row.id + " · " + row.reported_id,
+      "multi_report_card:" + row.brandId + ":" + row.id).row();
+    if (page > 0) keyboard.text("← Назад", "multi_reports:" + (page - 1));
+    if ((page + 1) * REPORTS_PAGE_SIZE < rows.length) keyboard.text("Далее →", "multi_reports:" + (page + 1));
+    keyboard.row().text("← Все чаты", "multi_home");
+    const preview = selected.map(row => brand(row.brandId).name + " #" + row.id + ": " + reportText(row).slice(0, 65));
+    const message = "🚩 Жалобы на проверке\nВсего в очереди: " + rows.length
+      + (rows.length === 1800 ? " (показаны последние 200 от каждого бота)" : "")
+      + "\nСтраница " + (page + 1) + "\n\n"
+      + (preview.join("\n") || "Новых жалоб нет.");
+    const view = { protect_content: true, reply_markup: keyboard };
+    return edit ? ctx.editMessageText(message, view) : ctx.reply(message, view);
+  }
+
+  async function reportCard(ctx, id, reportId) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const st = store(id), report = st?.pendingReport(reportId);
+    if (!report) return ctx.answerCallbackQuery({ text: "Жалоба уже рассмотрена или удалена", show_alert: true });
+    await ctx.answerCallbackQuery();
+    const keyboard = new InlineKeyboard()
+      .text("⛔ Заблокировать", "multi_report_ban_ask:" + id + ":" + report.id + ":" + report.reported_id)
+      .text("✅ Закрыть", "multi_report_review:" + id + ":" + report.id).row()
+      .text("🗂 Архив этого бота", "multi_list:" + id + ":m:0").row()
+      .text("← К жалобам", "multi_reports:0");
+    return ctx.editMessageText("🚩 " + brand(id).name + " · жалоба #" + report.id
+      + "\nОт: ID " + report.reporter_id + "\nНа: ID " + report.reported_id
+      + "\nДата: " + (report.created_at || "неизвестна")
+      + "\n\nТекст жалобы:\n" + reportText(report)
+      + "\n\nСтатус нарушителя в этом боте: " + (st.isBanned(report.reported_id) ? "заблокирован" : "не заблокирован"),
+      { protect_content: true, reply_markup: keyboard });
+  }
+
+  async function askReportBan(ctx, id, reportId, userId) {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const report = store(id)?.pendingReport(reportId);
+    if (!report || Number(report.reported_id) !== userId)
+      return ctx.answerCallbackQuery({ text: "Жалоба уже рассмотрена или устарела", show_alert: true });
+    await ctx.answerCallbackQuery();
+    const keyboard = new InlineKeyboard()
+      .text("⛔ Подтвердить бан", "multi_report_ban_confirm:" + id + ":" + reportId + ":" + userId).row()
+      .text("Отмена", "multi_report_card:" + id + ":" + reportId);
+    return ctx.editMessageText("Заблокировать ID " + userId + " только в боте «" + brand(id).name
+      + "»?\n\nТекст жалобы:\n" + reportText(report)
+      + "\n\nБлокировка завершит текущую сессию пользователя.",
+      { protect_content: true, reply_markup: keyboard });
   }
 
   bot.command("chats", ctx => dashboard(ctx));
@@ -487,26 +530,48 @@ export function installChatNetworkAdmin(bot, originalStore, options = {}) {
   bot.callbackQuery(/^multi_clear_stage2:([0-9a-f]{16})$/, ctx => confirmArchiveClearStage(ctx, ctx.match[1]));
   bot.callbackQuery(/^multi_clear_execute:([0-9a-f]{16})$/, ctx => executeArchiveClear(ctx, ctx.match[1]));
 
-  bot.callbackQuery(new RegExp("^multi_report_ban:" + IDS + ":(\\d+):(\\d+)$"), async ctx => {
+  bot.callbackQuery(/^multi_reports:(\\d+)$/, async ctx => {
     if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
-    const id = ctx.match[1], reportId = Number(ctx.match[2]), userId = Number(ctx.match[3]);
-    if (!Number.isSafeInteger(userId) || userId <= 0) return ctx.answerCallbackQuery({ text: "Некорректный ID", show_alert: true });
-    const report = store(id).recentReports(50).find(item => Number(item.id) === reportId);
-    if (!report || Number(report.reported_id) !== userId) {
+    await ctx.answerCallbackQuery();
+    return showAllReports(ctx, Number(ctx.match[1]), true);
+  });
+  bot.callbackQuery(new RegExp("^multi_report_card:" + IDS + ":(\\d+)$"),
+    ctx => reportCard(ctx, ctx.match[1], Number(ctx.match[2])));
+  // Preserve buttons already sent by older admin bot versions.
+  bot.callbackQuery(new RegExp("^multi_report_ban:" + IDS + ":(\\d+):(\\d+)$"),
+    ctx => askReportBan(ctx, ctx.match[1], Number(ctx.match[2]), Number(ctx.match[3])));
+  bot.callbackQuery(new RegExp("^multi_report_ban_ask:" + IDS + ":(\\d+):(\\d+)$"),
+    ctx => askReportBan(ctx, ctx.match[1], Number(ctx.match[2]), Number(ctx.match[3])));
+  bot.callbackQuery(new RegExp("^multi_report_ban_confirm:" + IDS + ":(\\d+):(\\d+)$"), async ctx => {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const id = ctx.match[1], reportId = Number(ctx.match[2]), userId = Number(ctx.match[3]), st = store(id);
+    const report = st?.pendingReport(reportId);
+    if (!report || Number(report.reported_id) !== userId)
       return ctx.answerCallbackQuery({ text: "Жалоба уже рассмотрена или устарела", show_alert: true });
-    }
-    store(id).banUser(userId);
-    store(id).reviewReport(reportId);
+    st.banUser(userId);
+    st.reviewReport(reportId);
     await ctx.answerCallbackQuery("Пользователь заблокирован в этом боте");
     return ctx.editMessageText(brand(id).name + " · жалоба #" + reportId
-      + "\nID " + userId + " заблокирован только в выбранном боте.");
+      + "\nID " + userId + " заблокирован только в выбранном боте.",
+      { reply_markup: new InlineKeyboard().text("♻️ Разблокировать", "multi_report_unban:" + id + ":" + userId)
+        .row().text("← Жалобы", "multi_reports:0") });
   });
   bot.callbackQuery(new RegExp("^multi_report_review:" + IDS + ":(\\d+)$"), async ctx => {
     if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
     const id = ctx.match[1], reportId = Number(ctx.match[2]);
-    store(id).reviewReport(reportId);
+    if (!store(id).reviewReport(reportId)) return ctx.answerCallbackQuery({ text: "Жалоба уже закрыта", show_alert: true });
     await ctx.answerCallbackQuery("Жалоба рассмотрена");
-    return ctx.editMessageText(brand(id).name + " · жалоба #" + reportId + "\nЗакрыта без блокировки.");
+    return ctx.editMessageText(brand(id).name + " · жалоба #" + reportId + "\nЗакрыта без блокировки.",
+      { reply_markup: new InlineKeyboard().text("← Жалобы", "multi_reports:0") });
+  });
+  bot.callbackQuery(new RegExp("^multi_report_unban:" + IDS + ":(\\d+)$"), async ctx => {
+    if (!privateChat(ctx)) return ctx.answerCallbackQuery({ text: "Только в личном чате", show_alert: true });
+    const id = ctx.match[1], userId = Number(ctx.match[2]);
+    if (!Number.isSafeInteger(userId) || userId <= 0) return ctx.answerCallbackQuery({ text: "Некорректный ID", show_alert: true });
+    store(id).unbanUser(userId);
+    await ctx.answerCallbackQuery("Разблокирован");
+    return ctx.editMessageText("ID " + userId + " разблокирован в " + brand(id).name + ".",
+      { reply_markup: new InlineKeyboard().text("← Жалобы", "multi_reports:0") });
   });
 
   bot.command("unban_chat",async ctx => {
